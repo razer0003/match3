@@ -125,8 +125,6 @@ class Match3Game:
     
     def start_swap_animation(self, pos1, pos2):
         """Start swap animation between two tiles"""
-        self.animating = True
-        
         # Get screen positions
         screen_pos1 = self.get_tile_screen_pos(pos1)
         screen_pos2 = self.get_tile_screen_pos(pos2)

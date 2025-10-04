@@ -1,6 +1,9 @@
 import random
-from typing import List, Optional, Set, Tuple
+from typing import List, Optional, Set, Tuple, TYPE_CHECKING
 from enum import Enum
+
+if TYPE_CHECKING:
+    from special_tiles import SpecialTile
 
 class TileColor(Enum):
     RED = (255, 0, 0)
@@ -21,18 +24,25 @@ class MatchType(Enum):
 class Tile:
     """Represents a single tile in the game"""
     
-    def __init__(self, color: TileColor):
+    def __init__(self, color: TileColor, special_tile=None):
         self.color = color
+        self.special_tile = special_tile  # SpecialTile instance if this is a special tile
         self.falling = False
         self.fall_speed = 0
         self.target_row = 0
         self.current_y = 0
     
     def __repr__(self):
+        if self.is_special():
+            return f"Tile({self.color.name}, Special: {self.special_tile.tile_type.name})"
         return f"Tile({self.color.name})"
     
     def is_empty(self):
         return self.color == TileColor.EMPTY
+    
+    def is_special(self):
+        """Check if this is a special tile"""
+        return self.special_tile is not None
     
     def set_falling(self, target_row: int, fall_speed: float = 300):
         """Set tile to falling state"""
@@ -70,6 +80,10 @@ class Board:
         self.grid: List[List[Optional[Tile]]] = []
         self.available_colors = [TileColor.RED, TileColor.GREEN, TileColor.BLUE, 
                                TileColor.YELLOW, TileColor.ORANGE]
+        
+        # Import here to avoid circular imports
+        from special_tiles import TileDeck
+        self.tile_deck = TileDeck()
     
     def generate_initial_board(self):
         """Generate initial board ensuring no matches"""
@@ -229,19 +243,19 @@ class Board:
         """Find L-shaped corner matches"""
         matches = []
         
-        # Define corner patterns (relative positions) - More comprehensive L-shapes
+        # Define corner patterns (relative positions) - L-shapes as you specified
+        # Pattern: xxx
+        #          xoo  
+        #          xoo
         corner_patterns = [
-            # 3x3 L-shapes (5 tiles each)
-            [(0, 0), (0, 1), (0, 2), (1, 0), (2, 0)],  # Top-left L
-            [(0, 0), (0, 1), (0, 2), (1, 2), (2, 2)],  # Top-right L
-            [(0, 0), (1, 0), (2, 0), (2, 1), (2, 2)],  # Bottom-left L
-            [(0, 2), (1, 2), (2, 2), (2, 1), (2, 0)],  # Bottom-right L
-            
-            # Smaller L-shapes (4 tiles each)
-            [(0, 0), (0, 1), (1, 0), (2, 0)],          # Small top-left L
-            [(0, 0), (0, 1), (1, 1), (2, 1)],          # Small top-right L
-            [(0, 0), (1, 0), (2, 0), (2, 1)],          # Small bottom-left L
-            [(0, 1), (1, 1), (2, 1), (2, 0)],          # Small bottom-right L
+            # Top-left corner (xxx pattern at top)
+            [(0, 0), (0, 1), (0, 2), (1, 0), (2, 0)],  # xxx at top, x column down
+            # Top-right corner (xxx pattern at top)
+            [(0, 0), (0, 1), (0, 2), (1, 2), (2, 2)],  # xxx at top, x column down right
+            # Bottom-left corner (xxx pattern at bottom)
+            [(0, 0), (1, 0), (2, 0), (2, 1), (2, 2)],  # x column down, xxx at bottom
+            # Bottom-right corner (xxx pattern at bottom)
+            [(0, 2), (1, 2), (2, 0), (2, 1), (2, 2)],  # x column down right, xxx at bottom
         ]
         
         # Check all possible positions on the board
@@ -268,21 +282,18 @@ class Board:
         matches = []
         
         # Define T patterns (relative positions) - All 4 orientations
+        # Pattern: xxx
+        #          oxo
+        #          oxo
         t_patterns = [
-            # T pointing up
-            [(0, 1), (1, 0), (1, 1), (1, 2), (2, 1)],
-            # T pointing down
-            [(0, 1), (1, 0), (1, 1), (1, 2), (-1, 1)],
-            # T pointing left
-            [(0, 1), (1, 0), (1, 1), (1, 2), (1, -1)],
-            # T pointing right
-            [(0, 1), (1, 0), (1, 1), (1, 2), (1, 3)],
-            
-            # Smaller T patterns (4 tiles)
-            [(0, 0), (0, 1), (0, 2), (1, 1)],         # T up
-            [(0, 1), (1, 0), (1, 1), (1, 2)],         # T down
-            [(0, 0), (1, 0), (2, 0), (1, 1)],         # T right
-            [(0, 1), (1, 0), (1, 1), (2, 1)],         # T left
+            # T with horizontal top (xxx at top, vertical line down middle)
+            [(0, 0), (0, 1), (0, 2), (1, 1), (2, 1)],  # xxx at top, line down middle
+            # T with horizontal bottom (xxx at bottom, vertical line up middle)  
+            [(0, 1), (1, 1), (2, 0), (2, 1), (2, 2)],  # line up middle, xxx at bottom
+            # T with vertical left (xxx on left, horizontal line right middle)
+            [(0, 0), (1, 0), (2, 0), (1, 1), (1, 2)],  # xxx on left, line right middle
+            # T with vertical right (xxx on right, horizontal line left middle)
+            [(0, 2), (1, 0), (1, 1), (1, 2), (2, 2)],  # line left middle, xxx on right
         ]
         
         # Check all possible positions on the board
@@ -305,9 +316,55 @@ class Board:
         return matches
     
     def clear_matches(self, match: Match):
-        """Clear tiles from a match"""
-        for row, col in match.positions:
-            self.grid[row][col] = None
+        """Clear tiles from a match and potentially create special tiles"""
+        # Determine if this match should create a special tile
+        special_tile = self.tile_deck.get_special_tile_for_match(match.match_type)
+        
+        if special_tile:
+            # Create special tile at the center of the match
+            center_pos = self.get_match_center(match.positions)
+            center_row, center_col = center_pos
+            
+            # Get the color from the matched tiles
+            matched_color = None
+            for row, col in match.positions:
+                tile = self.grid[row][col]
+                if tile and not tile.is_empty():
+                    matched_color = tile.color
+                    break
+            
+            # Clear all matched tiles
+            for row, col in match.positions:
+                self.grid[row][col] = None
+            
+            # Place the special tile at the center
+            special_tile.color = matched_color
+            self.grid[center_row][center_col] = Tile(matched_color, special_tile)
+        else:
+            # Regular match - just clear the tiles
+            for row, col in match.positions:
+                self.grid[row][col] = None
+    
+    def get_match_center(self, positions: List[Tuple[int, int]]) -> Tuple[int, int]:
+        """Get the center position of a match for placing special tiles"""
+        if not positions:
+            return (0, 0)
+        
+        # Calculate the centroid of the match
+        avg_row = sum(pos[0] for pos in positions) / len(positions)
+        avg_col = sum(pos[1] for pos in positions) / len(positions)
+        
+        # Find the position closest to the centroid
+        center_pos = positions[0]
+        min_distance = float('inf')
+        
+        for pos in positions:
+            distance = ((pos[0] - avg_row) ** 2 + (pos[1] - avg_col) ** 2) ** 0.5
+            if distance < min_distance:
+                min_distance = distance
+                center_pos = pos
+        
+        return center_pos
     
     def apply_gravity(self):
         """Apply gravity to make tiles fall down"""
@@ -430,3 +487,121 @@ class Board:
                         tile_index += 1
                 else:
                     self.grid[row][col] = None
+    
+    def activate_special_tile(self, row: int, col: int) -> tuple:
+        """Activate a special tile and return (affected_positions, activated_tiles)"""
+        tile = self.get_tile(row, col)
+        if not tile or not tile.is_special():
+            return [], []
+        
+        # Track all activated special tiles for particle effects
+        activated_tiles = [(row, col, tile.special_tile)]
+        
+        # Get positions affected by the special tile
+        affected_positions = tile.special_tile.get_affected_positions(self, (row, col))
+        
+        # First, collect special tiles that will be chain-detonated (before clearing)
+        chain_reactions = []
+        for pos_row, pos_col in affected_positions:
+            if 0 <= pos_row < self.height and 0 <= pos_col < self.width:
+                # Check if there are other special tiles in the affected area
+                affected_tile = self.get_tile(pos_row, pos_col)
+                if affected_tile and affected_tile.is_special() and (pos_row, pos_col) != (row, col):
+                    # Store the special tile for chain reaction
+                    chain_reactions.append((pos_row, pos_col, affected_tile.special_tile))
+        
+        # Clear the original special tile first
+        self.grid[row][col] = None
+        
+        # Clear all affected positions (except special tiles that will chain)
+        for pos_row, pos_col in affected_positions:
+            if 0 <= pos_row < self.height and 0 <= pos_col < self.width:
+                # Don't clear special tiles yet - they need to detonate first
+                affected_tile = self.get_tile(pos_row, pos_col)
+                if not (affected_tile and affected_tile.is_special()):
+                    self.grid[pos_row][pos_col] = None
+        
+        # Handle chain reactions - special tiles detonate instead of being destroyed
+        all_affected = affected_positions.copy()
+        for chain_row, chain_col, special_tile in chain_reactions:
+            # Recursively activate the special tile (it will detonate)
+            chain_positions, chain_activated = self.activate_special_tile(chain_row, chain_col)
+            all_affected.extend(chain_positions)
+            activated_tiles.extend(chain_activated)
+        
+        return list(set(all_affected)), activated_tiles  # Remove duplicates from affected positions
+    
+    def check_for_special_tile_matches(self, row: int, col: int) -> bool:
+        """Check if a position contains a special tile that should be activated"""
+        tile = self.get_tile(row, col)
+        return tile is not None and tile.is_special()
+    
+    def check_for_combo(self, pos1: Tuple[int, int], pos2: Tuple[int, int]) -> Optional['SpecialTile']:
+        """Check if swapping two special tiles creates a combo"""
+        # Import here to avoid circular imports
+        from special_tiles import SpecialTile, SpecialTileType, create_special_tile
+        
+        tile1 = self.get_tile(*pos1)
+        tile2 = self.get_tile(*pos2)
+        
+        # Both tiles must be special to create a combo
+        if not (tile1 and tile1.is_special() and tile2 and tile2.is_special()):
+            return None
+        
+        special1 = tile1.special_tile
+        special2 = tile2.special_tile
+        
+        # Get the types of the special tiles
+        type1 = special1.tile_type
+        type2 = special2.tile_type
+        
+        # Check for specific combinations
+        combo_map = {
+            # Bomb + Rocket combinations
+            frozenset([SpecialTileType.BOMB, SpecialTileType.ROCKET_HORIZONTAL]): SpecialTileType.BOMB_ROCKET,
+            frozenset([SpecialTileType.BOMB, SpecialTileType.ROCKET_VERTICAL]): SpecialTileType.BOMB_ROCKET,
+            
+            # Bomb + Board Wipe combination
+            frozenset([SpecialTileType.BOMB, SpecialTileType.BOARD_WIPE]): SpecialTileType.BOMB_BOARDWIPE,
+            
+            # Bomb + Bomb = Mega Bomb
+            frozenset([SpecialTileType.BOMB, SpecialTileType.BOMB]): SpecialTileType.MEGA_BOMB,
+            
+            # Lightning + Bomb = Energized Bomb
+            frozenset([SpecialTileType.LIGHTNING, SpecialTileType.BOMB]): SpecialTileType.ENERGIZED_BOMB,
+            
+            # Lightning + Lightning = Board Wipe
+            frozenset([SpecialTileType.LIGHTNING, SpecialTileType.LIGHTNING]): SpecialTileType.BOARD_WIPE,
+            
+            # Rocket + Rocket = Simple Cross (1x1 cross)
+            frozenset([SpecialTileType.ROCKET_HORIZONTAL, SpecialTileType.ROCKET_VERTICAL]): SpecialTileType.SIMPLE_CROSS,
+            
+
+            
+            # Rocket + Board Wipe combination
+            frozenset([SpecialTileType.ROCKET_HORIZONTAL, SpecialTileType.BOARD_WIPE]): SpecialTileType.ROCKET_BOARDWIPE,
+            frozenset([SpecialTileType.ROCKET_VERTICAL, SpecialTileType.BOARD_WIPE]): SpecialTileType.ROCKET_BOARDWIPE,
+            
+            # Rocket + Lightning combination
+            frozenset([SpecialTileType.ROCKET_HORIZONTAL, SpecialTileType.LIGHTNING]): SpecialTileType.ROCKET_LIGHTNING,
+            frozenset([SpecialTileType.ROCKET_VERTICAL, SpecialTileType.LIGHTNING]): SpecialTileType.ROCKET_LIGHTNING,
+        }
+        
+        # Check for same-type rocket combinations first
+        if type1 == type2:
+            if type1 in [SpecialTileType.ROCKET_HORIZONTAL, SpecialTileType.ROCKET_VERTICAL]:
+                # Same-type rockets create simple cross
+                color = special1.color if special1.color else special2.color
+                return create_special_tile(SpecialTileType.SIMPLE_CROSS, color=color)
+        
+        # Create a set of the two tile types
+        type_set = frozenset([type1, type2])
+        
+        # Check if this combination exists in our combo map
+        combo_type = combo_map.get(type_set)
+        if combo_type:
+            # Use the color of the first tile
+            color = special1.color if special1.color else special2.color
+            return create_special_tile(combo_type, color=color)
+        
+        return None

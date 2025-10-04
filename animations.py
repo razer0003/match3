@@ -36,15 +36,24 @@ class FallAnimation(Animation):
         completed = super().update(dt)
         progress = self.get_progress()
         
+        # Clamp progress to prevent overshooting
+        progress = min(1.0, max(0.0, progress))
+        
         # Use easing function for more natural fall
-        eased_progress = self.ease_in_cubic(progress)
+        eased_progress = self.ease_in_quad(progress)
         self.current_y = self.start_y + (self.end_y - self.start_y) * eased_progress
+        
+        # Ensure we never overshoot the target position
+        if self.start_y < self.end_y:  # Falling down
+            self.current_y = min(self.current_y, self.end_y)
+        else:  # Falling up (shouldn't happen, but safety)
+            self.current_y = max(self.current_y, self.end_y)
         
         return completed
     
-    def ease_in_cubic(self, t: float) -> float:
-        """Cubic easing function for natural acceleration"""
-        # Use a less aggressive easing for more natural feel
+    def ease_in_quad(self, t: float) -> float:
+        """Quadratic easing function for gentle acceleration"""
+        # Simple quadratic easing that can't overshoot
         return t * t
 
 class SwapAnimation(Animation):

@@ -6,8 +6,6 @@ Configurable difficulty with strategic thinking and lookahead capabilities
 import random
 import copy
 import time
-import threading
-from concurrent.futures import ThreadPoolExecutor
 from typing import List, Tuple, Optional, Dict, Any
 from enum import Enum
 from board import Board, TileColor, Match, MatchType
@@ -440,9 +438,12 @@ class Match3AI:
         self.thinking = False
         self.best_move = None
         self.evaluator = MoveEvaluator(config)
-        self.executor = ThreadPoolExecutor(max_workers=1)
-        self.current_future = None
         self.move_ready = False
+        
+        # Frame-based computation state
+        self.computation_state = None
+        self.possible_moves = None
+        self.current_move_index = 0
     
     def set_board(self, board: Board):
         """Set the board this AI should analyze"""
@@ -518,39 +519,91 @@ class Match3AI:
         return best_follow_up_score
     
     def start_thinking(self):
-        """Start background computation for the next move"""
+        """Start frame-based computation for the next move"""
         if not self.current_board or self.thinking or not self.should_make_move():
             return
             
         self.thinking = True
         self.move_ready = False
-        self.current_future = self.executor.submit(self._compute_move)
+        self.computation_state = "analyzing"
+        self.possible_moves = None
+        self.current_move_index = 0
+        self.best_move = None
     
-    def _compute_move(self) -> Optional[Move]:
-        """Background computation of the best move"""
-        try:
-            return self.get_best_move()
-        except Exception as e:
-            print(f"AI computation error: {e}")
-            return None
+    def update_computation(self) -> bool:
+        """Update AI computation, returns True if computation is complete"""
+        if not self.thinking:
+            return True
+            
+        if self.computation_state == "analyzing":
+            # Get all possible moves
+            analyzer = BoardAnalyzer(self.current_board, self.config)
+            self.possible_moves = analyzer.get_all_possible_moves()
+            
+            if not self.possible_moves:
+                self.thinking = False
+                return True
+                
+            self.computation_state = "evaluating"
+            self.current_move_index = 0
+            return False
+            
+        elif self.computation_state == "evaluating":
+            # Evaluate 2-3 moves per frame to spread computation
+            moves_per_frame = 3
+            end_index = min(self.current_move_index + moves_per_frame, len(self.possible_moves))
+            
+            for i in range(self.current_move_index, end_index):
+                self.evaluator.evaluate_move(self.current_board, self.possible_moves[i])
+            
+            self.current_move_index = end_index
+            
+            if self.current_move_index >= len(self.possible_moves):
+                self.computation_state = "lookahead" if self.config.thinking_depth > 1 else "finalizing"
+                self.current_move_index = 0
+            
+            return False
+            
+        elif self.computation_state == "lookahead":
+            # Apply lookahead to top moves only, spread across frames
+            top_moves = min(5, len(self.possible_moves))  # Only lookahead on top 5 moves
+            moves_per_frame = 1  # 1 lookahead per frame since it's expensive
+            
+            if self.current_move_index < top_moves:
+                move = self.possible_moves[self.current_move_index]
+                lookahead_score = self.calculate_lookahead_score(move, self.config.thinking_depth - 1)
+                move.score += lookahead_score * 0.3
+                self.current_move_index += 1
+                return False
+            else:
+                self.computation_state = "finalizing"
+                return False
+                
+        elif self.computation_state == "finalizing":
+            # Finalize the best move selection
+            self.possible_moves.sort(key=lambda m: m.score, reverse=True)
+            
+            # Apply mistake chance for realistic AI behavior
+            if random.random() < self.config.mistake_chance and len(self.possible_moves) > 1:
+                choice_index = min(random.randint(1, 3), len(self.possible_moves) - 1)
+                self.best_move = self.possible_moves[choice_index]
+            else:
+                self.best_move = self.possible_moves[0]
+            
+            self.thinking = False
+            self.move_ready = True
+            self.last_move_time = time.time()
+            return True
+            
+        return True
     
     def get_computed_move(self) -> Optional[Move]:
         """Get the computed move if ready, non-blocking"""
-        if not self.thinking or not self.current_future:
-            return None
-            
-        if self.current_future.done():
-            try:
-                move = self.current_future.result()
-                self.thinking = False
-                self.move_ready = True
-                self.last_move_time = time.time()
-                return move
-            except Exception as e:
-                print(f"Error getting AI move: {e}")
-                self.thinking = False
-                return None
-        
+        if self.move_ready and self.best_move:
+            move = self.best_move
+            self.best_move = None
+            self.move_ready = False
+            return move
         return None
     
     def is_thinking(self) -> bool:

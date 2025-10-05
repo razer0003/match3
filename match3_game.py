@@ -139,7 +139,8 @@ class SpriteManager:
 
 class Match3Game:
     def __init__(self, level: int = 1):
-        self.screen = pygame.display.set_mode((WINDOW_WIDTH, WINDOW_HEIGHT))
+        # Enable hardware acceleration for better performance
+        self.screen = pygame.display.set_mode((WINDOW_WIDTH, WINDOW_HEIGHT), pygame.DOUBLEBUF | pygame.HWSURFACE)
         pygame.display.set_caption("Match 3 Game")
         self.clock = pygame.time.Clock()
         self.running = True
@@ -1837,7 +1838,7 @@ class Match3Game:
             if tile_filename:
                 # Load and scale the tile image with crisp scaling (no smoothing)
                 try:
-                    original_sprite = pygame.image.load(f"sprites/tiles/{tile_filename}")
+                    original_sprite = pygame.image.load(f"sprites/tiles/{tile_filename}").convert_alpha()
                     # Use pygame.transform.scale instead of smoothscale for crisp pixels
                     sprite_surface = pygame.transform.scale(original_sprite, (scaled_size, scaled_size))
                 except Exception as e:
@@ -2369,8 +2370,12 @@ class Match3Game:
         if not self.boss_ai or not self.boss_board:
             return
         
-        # Only start thinking when it's actually time to make a move and not already thinking
-        if not self.boss_ai.is_thinking() and self.boss_ai.should_make_move():
+        # Update AI computation (frame-based processing)
+        if self.boss_ai.is_thinking():
+            self.boss_ai.update_computation()
+        
+        # Start thinking when it's time to make a move and not already thinking
+        elif self.boss_ai.should_make_move():
             self.boss_ai.start_thinking()
         
         # Check if a move is ready
@@ -2767,7 +2772,7 @@ class Match3Game:
 
 def run_level_select():
     """Run the level select screen and return selected level"""
-    screen = pygame.display.set_mode((WINDOW_WIDTH, WINDOW_HEIGHT))
+    screen = pygame.display.set_mode((WINDOW_WIDTH, WINDOW_HEIGHT), pygame.DOUBLEBUF | pygame.HWSURFACE)
     pygame.display.set_caption("Match 3 - Level Select")
     clock = pygame.time.Clock()
     

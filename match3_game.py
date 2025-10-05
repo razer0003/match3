@@ -1661,27 +1661,20 @@ class Match3Game:
                     self.boss_swap_animations.remove(swap_anim)
                     self.complete_boss_swap_animation(swap_anim)
         
-        # Update boss fall animations
+        # Update boss fall animations (simplified for performance)
         if not self.rocket_lightning_active and not self.black_hole_active:
-            completed_boss_fall_animations = []
+            completed_count = 0
             for fall_anim in self.boss_fall_animations[:]:
                 if fall_anim.update(dt):
                     # Animation completed - ensure tile is properly placed on boss board
                     if hasattr(fall_anim, 'tile') and hasattr(fall_anim, 'to_row') and hasattr(fall_anim, 'col'):
                         self.boss_board.set_tile(fall_anim.to_row, fall_anim.col, fall_anim.tile)
                     
-                    # Add a small delay before removing to prevent flashing
-                    if not hasattr(fall_anim, 'completion_delay'):
-                        fall_anim.completion_delay = 0.05  # 50ms delay
-                        fall_anim.delay_elapsed = 0.0
-                    
-                    fall_anim.delay_elapsed += dt
-                    if fall_anim.delay_elapsed >= fall_anim.completion_delay:
-                        completed_boss_fall_animations.append(fall_anim)
-                        self.boss_fall_animations.remove(fall_anim)
+                    self.boss_fall_animations.remove(fall_anim)
+                    completed_count += 1
             
             # Check if all boss fall animations are complete
-            if completed_boss_fall_animations and not self.boss_fall_animations:
+            if completed_count > 0 and not self.boss_fall_animations:
                 # All boss falling is done, check for cascade matches
                 self.complete_boss_fall_animation()
 
@@ -2145,8 +2138,8 @@ class Match3Game:
         
         # Draw falling tiles on boss board
         for fall_anim in self.boss_fall_animations:
-            # Calculate current position
-            current_row = (fall_anim.current_y - self.boss_board_y) / self.tile_size
+            # Calculate current position accounting for tile center offset
+            current_row = (fall_anim.current_y - self.boss_board_y - self.tile_size // 2) / self.tile_size
             self.draw_boss_animated_tile(fall_anim.tile, fall_anim.col, current_row)
         
         # Draw swapping tiles on boss board
@@ -2159,6 +2152,10 @@ class Match3Game:
                 self.draw_boss_animated_tile_at_screen_pos(tile1, swap_anim.current_pos1)
             if tile2:
                 self.draw_boss_animated_tile_at_screen_pos(tile2, swap_anim.current_pos2)
+        
+        # Draw AI thinking indicator
+        if self.boss_ai and self.boss_ai.is_thinking():
+            self.draw_thinking_indicator()
     
     def draw_boss_tile_at_position(self, row, col, tile):
         """Draw a single tile on the boss board"""
@@ -2212,38 +2209,11 @@ class Match3Game:
         """Draw an animated tile on the boss board at a specific screen position"""
         x, y = screen_pos
         
-        # Only add special effects for SWAP animations, not fall animations
-        # Check if this is being called from a swap animation by checking if position is between grid positions
-        is_swap_animation = (x % self.tile_size != self.tile_size // 2)
-        
-        if is_swap_animation:
-            # Swap animation - make it very obvious with scaling and glow
-            scale_factor = 1.2  # Make swapping tiles 20% bigger
-            scaled_tile_size = int(self.tile_size * scale_factor)
-            
-            if tile.special_tile:
-                sprite = self.sprite_manager.get_special_sprite(tile.special_tile.get_visual_representation().get('sprite_type', 'lightning'), scaled_tile_size)
-            else:
-                sprite = self.sprite_manager.get_tile_sprite(tile.color, scaled_tile_size)
-            
-            if sprite:
-                sprite_rect = sprite.get_rect(center=(x, y))
-                self.screen.blit(sprite, sprite_rect)
-                
-                # Add a bright red glow for swap animations
-                pygame.draw.circle(self.screen, (255, 0, 0), (int(x), int(y)), scaled_tile_size // 2 + 4, 3)
-            else:
-                # Fallback with red border
-                scaled_half = scaled_tile_size // 2
-                tile_rect = pygame.Rect(x - scaled_half, y - scaled_half, scaled_tile_size, scaled_tile_size)
-                pygame.draw.rect(self.screen, tile.color.value, tile_rect)
-                pygame.draw.rect(self.screen, (255, 0, 0), tile_rect, 3)
+        # Just draw the tile normally - no special effects or red circles
+        if tile.special_tile:
+            sprite = self.sprite_manager.get_special_sprite(tile.special_tile.get_visual_representation().get('sprite_type', 'lightning'), self.tile_size)
         else:
-            # Fall animation - just draw normally
-            if tile.special_tile:
-                sprite = self.sprite_manager.get_special_sprite(tile.special_tile.get_visual_representation().get('sprite_type', 'lightning'), self.tile_size)
-            else:
-                sprite = self.sprite_manager.get_tile_sprite(tile.color, self.tile_size)
+            sprite = self.sprite_manager.get_tile_sprite(tile.color, self.tile_size)
             
             if sprite:
                 sprite_rect = sprite.get_rect(center=(x, y))
@@ -2252,6 +2222,41 @@ class Match3Game:
                 # Fallback to normal colored rectangle
                 tile_rect = pygame.Rect(x - self.tile_size // 2, y - self.tile_size // 2, self.tile_size, self.tile_size)
                 pygame.draw.rect(self.screen, tile.color.value, tile_rect)
+    
+    def draw_thinking_indicator(self):
+        """Draw an indicator showing that the AI is thinking"""
+        # Position above the boss board
+        indicator_x = self.boss_board_x + (self.boss_board.width * self.tile_size) // 2
+        indicator_y = self.boss_board_y - 40
+        
+        # Create pulsing effect
+        pulse = (pygame.time.get_ticks() / 500) % 1.0  # Pulse every 500ms
+        alpha = int(128 + 127 * abs(pulse - 0.5) * 2)  # Pulse between 128-255
+        
+        # Create thinking text
+        thinking_text = self.font.render("AI THINKING...", True, (255, 255, 0))
+        thinking_rect = thinking_text.get_rect(center=(indicator_x, indicator_y))
+        
+        # Draw background with pulsing alpha
+        bg_surface = pygame.Surface((thinking_rect.width + 20, thinking_rect.height + 10))
+        bg_surface.set_alpha(alpha)
+        bg_surface.fill((0, 0, 0))
+        bg_rect = bg_surface.get_rect(center=(indicator_x, indicator_y))
+        self.screen.blit(bg_surface, bg_rect)
+        
+        # Draw the text
+        self.screen.blit(thinking_text, thinking_rect)
+        
+        # Draw spinning dots
+        dots = "⚈ ⚈ ⚈"
+        dots_text = self.font.render(dots, True, (255, 255, 255))
+        dots_rect = dots_text.get_rect(center=(indicator_x, indicator_y + 25))
+        
+        # Rotate the dots
+        angle = (pygame.time.get_ticks() / 10) % 360
+        rotated_dots = pygame.transform.rotate(dots_text, angle)
+        rotated_rect = rotated_dots.get_rect(center=dots_rect.center)
+        self.screen.blit(rotated_dots, rotated_rect)
     
     def draw_ui(self):
         """Draw UI elements like score, level info, etc."""
@@ -2364,8 +2369,12 @@ class Match3Game:
         if not self.boss_ai or not self.boss_board:
             return
         
-        # Get AI's chosen move
-        ai_move = self.boss_ai.make_move()
+        # Only start thinking when it's actually time to make a move and not already thinking
+        if not self.boss_ai.is_thinking() and self.boss_ai.should_make_move():
+            self.boss_ai.start_thinking()
+        
+        # Check if a move is ready
+        ai_move = self.boss_ai.get_computed_move()
         
         if ai_move:
             # Execute the move on the boss board
@@ -2383,8 +2392,8 @@ class Match3Game:
         screen_pos2 = self.get_boss_tile_screen_pos(pos2)
         
         # Create swap animation for boss board
-        print(f"Creating boss swap animation: {screen_pos1} -> {screen_pos2}, duration: 1.0s")
-        swap_anim = SwapAnimation(screen_pos1, screen_pos2, 1.0)  # 1.0 second animation for visibility
+        print(f"Creating boss swap animation: {screen_pos1} -> {screen_pos2}, duration: 0.3s")
+        swap_anim = SwapAnimation(screen_pos1, screen_pos2, 0.3)  # Same speed as player animations
         print(f"Animation created: start_pos1={swap_anim.start_pos1}, start_pos2={swap_anim.start_pos2}, duration={swap_anim.duration}")
         
         # Store tile positions and original tiles in the animation
@@ -2615,7 +2624,7 @@ class Match3Game:
         
         # Create explosion particle effect at activation position
         screen_pos = self.get_boss_tile_screen_pos(pos)
-        effect = ParticleEffect(screen_pos[0], screen_pos[1], (255, 255, 255), 50, 2.0, "explosion")
+        effect = ParticleEffect(screen_pos[0], screen_pos[1], (255, 255, 255), 50)
         self.particle_effects.append(effect)
     
     def handle_boss_rocket_boardwipe_combo(self, pos, combo_tile):

@@ -27,28 +27,28 @@ class AIConfig:
         
         # Base configuration based on difficulty
         if difficulty == AIDifficulty.EASY:
-            self.move_delay = 2.0  # Seconds between moves
+            self.move_delay = 0.5  # Reduced for normal game speed
             self.thinking_depth = 2  # How many moves to look ahead
             self.special_tile_awareness = 0.3  # How much to prioritize special tiles
             self.combo_planning = 0.2  # How much to plan combos
             self.mistake_chance = 0.15  # Chance to make suboptimal moves
             self.reaction_speed = 0.8  # Speed of reacting to cascades
         elif difficulty == AIDifficulty.MEDIUM:
-            self.move_delay = 1.5
+            self.move_delay = 0.3  # Reduced for normal game speed
             self.thinking_depth = 3  # Restored - using background threading now
             self.special_tile_awareness = 1.2  # Increased to prioritize special tiles more
             self.combo_planning = 0.5
             self.mistake_chance = 0.08
             self.reaction_speed = 0.6
         elif difficulty == AIDifficulty.HARD:
-            self.move_delay = 1.0
+            self.move_delay = 0.2  # Reduced for normal game speed
             self.thinking_depth = 4  # Restored - using background threading now
             self.special_tile_awareness = 0.8
             self.combo_planning = 0.7
             self.mistake_chance = 0.03
             self.reaction_speed = 0.4
         else:  # NIGHTMARE
-            self.move_delay = 0.7
+            self.move_delay = 0.1  # Reduced for normal game speed
             self.thinking_depth = 5  # Restored - using background threading now
             self.special_tile_awareness = 0.95
             self.combo_planning = 0.9
@@ -431,7 +431,7 @@ class MoveEvaluator:
         return abs(pos1[0] - pos2[0]) + abs(pos1[1] - pos2[1])
 
 class Match3AI:
-    """Main AI controller for the boss board"""
+    """Main AI controller for the boss board with background computation"""
     
     def __init__(self, config: AIConfig):
         self.config = config
@@ -440,6 +440,9 @@ class Match3AI:
         self.thinking = False
         self.best_move = None
         self.evaluator = MoveEvaluator(config)
+        self.executor = ThreadPoolExecutor(max_workers=1)
+        self.current_future = None
+        self.move_ready = False
     
     def set_board(self, board: Board):
         """Set the board this AI should analyze"""
@@ -514,14 +517,49 @@ class Match3AI:
         
         return best_follow_up_score
     
-    def make_move(self) -> Optional[Move]:
-        """Execute the AI's chosen move"""
-        if not self.should_make_move():
+    def start_thinking(self):
+        """Start background computation for the next move"""
+        if not self.current_board or self.thinking or not self.should_make_move():
+            return
+            
+        self.thinking = True
+        self.move_ready = False
+        self.current_future = self.executor.submit(self._compute_move)
+    
+    def _compute_move(self) -> Optional[Move]:
+        """Background computation of the best move"""
+        try:
+            return self.get_best_move()
+        except Exception as e:
+            print(f"AI computation error: {e}")
             return None
+    
+    def get_computed_move(self) -> Optional[Move]:
+        """Get the computed move if ready, non-blocking"""
+        if not self.thinking or not self.current_future:
+            return None
+            
+        if self.current_future.done():
+            try:
+                move = self.current_future.result()
+                self.thinking = False
+                self.move_ready = True
+                self.last_move_time = time.time()
+                return move
+            except Exception as e:
+                print(f"Error getting AI move: {e}")
+                self.thinking = False
+                return None
         
-        move = self.get_best_move()
-        if move:
-            self.last_move_time = time.time()
-            # The actual move execution will be handled by the game system
-        
-        return move
+        return None
+    
+    def is_thinking(self) -> bool:
+        """Check if AI is currently computing a move"""
+        return self.thinking
+    
+    def make_move(self) -> Optional[Move]:
+        """Execute the AI's chosen move (legacy method for compatibility)"""
+        if not self.thinking:
+            self.start_thinking()
+            
+        return self.get_computed_move()

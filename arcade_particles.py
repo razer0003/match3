@@ -279,6 +279,21 @@ class PixelParticleSystem:
         for effect in self.effects:
             effect.draw(screen)
     
+    def create_diagonal_lightning(self, start_x: float, start_y: float, end_x: float, end_y: float, color: Tuple[int, int, int], thickness: int):
+        """Create diagonal lightning effect for Reality Break"""
+        effect = DiagonalLightningEffect(start_x, start_y, end_x, end_y, color, thickness)
+        self.effects.append(effect)
+    
+    def create_reality_black_hole(self, center_x: float, center_y: float):
+        """Create reality-consuming black hole effect"""
+        effect = RealityBlackHoleEffect(center_x, center_y)
+        self.effects.append(effect)
+    
+    def create_white_singularity(self, center_x: float, center_y: float):
+        """Create white singularity collapse effect"""
+        effect = WhiteSingularityEffect(center_x, center_y)
+        self.effects.append(effect)
+
     def is_finished(self) -> bool:
         """Check if all effects are finished"""
         return len(self.effects) == 0
@@ -2137,6 +2152,37 @@ class BoardWipeArcEffect:
             d1_surf.fill(color)
             d1_surf.set_alpha(alpha)
             screen.blit(d1_surf, (pixel_x + pixel_size // 2, pixel_y - pixel_size * 2))
+    
+    def _draw_crackle_spark(self, screen: pygame.Surface, x: int, y: int, size: int, color: Tuple[int, int, int], alpha: int):
+        """Draw crackle sparks as tiny bright pixelated dots"""
+        pixel_grid = 4
+        pixel_x = (x // pixel_grid) * pixel_grid
+        pixel_y = (y // pixel_grid) * pixel_grid
+        pixel_size = max(pixel_grid, size * pixel_grid)
+        
+        # Main dot
+        surf = pygame.Surface((pixel_size, pixel_size))
+        surf.fill(color)
+        surf.set_alpha(alpha)
+        screen.blit(surf, (pixel_x - pixel_size // 2, pixel_y - pixel_size // 2))
+        
+        # Add small cross pattern for crackling effect
+        if size >= 2:
+            # Tiny horizontal
+            h_surf = pygame.Surface((pixel_size * 2, pixel_grid))
+            h_surf.fill(color)
+            h_surf.set_alpha(alpha // 2)
+            screen.blit(h_surf, (pixel_x - pixel_size, pixel_y - pixel_grid // 2))
+            
+            # Tiny vertical  
+            v_surf = pygame.Surface((pixel_grid, pixel_size * 2))
+            v_surf.fill(color)
+            v_surf.set_alpha(alpha // 2)
+            screen.blit(v_surf, (pixel_x - pixel_grid // 2, pixel_y - pixel_size))
+    
+    def is_finished(self) -> bool:
+        """Check if board wipe arc effect is finished"""
+        return len(self.particles) == 0 and self.elapsed > self.duration
 
 
 class NuclearMegabombEffect:
@@ -2613,3 +2659,236 @@ class BlackHoleLightningExplosion:
     def is_finished(self) -> bool:
         """Check if board wipe arc effect is finished"""
         return len(self.particles) == 0 and self.elapsed > self.duration
+
+
+class DiagonalLightningEffect:
+    """Massive diagonal lightning bolt for Reality Break"""
+    
+    def __init__(self, start_x: float, start_y: float, end_x: float, end_y: float, color: Tuple[int, int, int], thickness: int):
+        self.start_x = start_x
+        self.start_y = start_y
+        self.end_x = end_x
+        self.end_y = end_y
+        self.color = color
+        self.thickness = thickness
+        self.elapsed = 0.0
+        self.duration = 0.5  # Lightning lasts 0.5 seconds
+        self.branches = []
+        
+        # Generate lightning branches
+        self._generate_lightning_branches()
+    
+    def _generate_lightning_branches(self):
+        """Generate branching lightning segments"""
+        import random
+        
+        # Main bolt - much thicker and jagged
+        self.branches.append({
+            'start': (self.start_x, self.start_y),
+            'end': (self.end_x, self.end_y),
+            'thickness': self.thickness * 3,  # Make main bolt much thicker
+            'is_main': True
+        })
+        
+        # Add jagged segments to main bolt
+        steps = 12
+        for i in range(steps - 1):
+            progress1 = i / steps
+            progress2 = (i + 1) / steps
+            
+            # Add randomness to make it jagged
+            offset1 = random.uniform(-20, 20)
+            offset2 = random.uniform(-20, 20)
+            
+            x1 = self.start_x + (self.end_x - self.start_x) * progress1 + offset1
+            y1 = self.start_y + (self.end_y - self.start_y) * progress1 + offset1
+            x2 = self.start_x + (self.end_x - self.start_x) * progress2 + offset2
+            y2 = self.start_y + (self.end_y - self.start_y) * progress2 + offset2
+            
+            self.branches.append({
+                'start': (x1, y1),
+                'end': (x2, y2),
+                'thickness': self.thickness * 2,
+                'is_main': True
+            })
+            
+            # Random branches from main segments
+            for _ in range(random.randint(3, 6)):
+                branch_length = random.uniform(50, 120)
+                branch_angle = random.uniform(0, 2 * 3.14159)
+                
+                branch_end_x = x1 + branch_length * random.uniform(-1, 1)
+                branch_end_y = y1 + branch_length * random.uniform(-1, 1)
+                
+                self.branches.append({
+                    'start': (x1, y1),
+                    'end': (branch_end_x, branch_end_y),
+                    'thickness': max(2, self.thickness),
+                    'is_main': False
+                })
+    
+    def update(self, dt: float):
+        """Update lightning effect"""
+        self.elapsed += dt
+    
+    def draw(self, screen: pygame.Surface):
+        """Draw lightning effect"""
+        if self.elapsed >= self.duration:
+            return
+            
+        import pygame
+        import random
+        
+        # Intense flicker effect
+        base_alpha = int(255 * (1.0 - self.elapsed / self.duration))
+        
+        # Create lightning surface for the whole screen
+        lightning_surf = pygame.Surface(screen.get_size(), pygame.SRCALPHA)
+        
+        # Draw all branches with multiple layers for intensity
+        for branch in self.branches:
+            start_pos = branch['start']
+            end_pos = branch['end']
+            thickness = branch['thickness']
+            is_main = branch.get('is_main', False)
+            
+            # Flicker more dramatically for main bolts
+            flicker_chance = 0.2 if is_main else 0.4
+            alpha = base_alpha if random.random() > flicker_chance else base_alpha // 3
+            
+            # Draw multiple layers for thickness and glow
+            # Outer glow (largest, most transparent)
+            if thickness > 4:
+                pygame.draw.line(lightning_surf, (*self.color, alpha // 4), start_pos, end_pos, thickness + 8)
+            
+            # Middle layer (medium thickness)
+            if thickness > 2:
+                pygame.draw.line(lightning_surf, (*self.color, alpha // 2), start_pos, end_pos, thickness + 4)
+            
+            # Core lightning bolt (main color)
+            pygame.draw.line(lightning_surf, (*self.color, alpha), start_pos, end_pos, thickness)
+            
+            # Bright white core for main bolts
+            if is_main and thickness > 3:
+                pygame.draw.line(lightning_surf, (255, 255, 255, alpha), start_pos, end_pos, max(1, thickness // 2))
+        
+        screen.blit(lightning_surf, (0, 0))
+    
+    def is_finished(self) -> bool:
+        """Check if lightning effect is finished"""
+        return self.elapsed >= self.duration
+
+
+class RealityBlackHoleEffect:
+    """Expanding black hole that consumes the entire screen"""
+    
+    def __init__(self, center_x: float, center_y: float):
+        self.center_x = center_x
+        self.center_y = center_y
+        self.elapsed = 0.0
+        self.duration = 4.0  # 4 seconds to consume everything - overlaps with singularity
+        self.max_radius = 1000  # Large enough to cover entire screen
+    
+    def update(self, dt: float):
+        """Update black hole expansion"""
+        self.elapsed += dt
+    
+    def draw(self, screen: pygame.Surface):
+        """Draw expanding black hole"""
+        if self.elapsed >= self.duration:
+            # Fill entire screen with black when finished
+            screen.fill((0, 0, 0))
+            return
+            
+        import pygame
+        import math
+        
+        # Calculate current radius to cover entire screen
+        screen_width, screen_height = screen.get_size()
+        max_screen_radius = int(math.sqrt(screen_width**2 + screen_height**2))  # Diagonal distance
+        
+        progress = self.elapsed / self.duration
+        current_radius = int(max_screen_radius * (progress ** 0.3))  # Slower initial growth, faster later
+        
+        # Draw solid black circle that grows to consume everything
+        if current_radius > 0:
+            pygame.draw.circle(screen, (0, 0, 0), (int(self.center_x), int(self.center_y)), current_radius)
+        
+        # Add dramatic purple event horizon effect
+        if current_radius > 20:
+            # Multiple rings for intensity
+            for ring in range(3):
+                ring_radius = current_radius + (ring * 8)
+                ring_alpha = 200 - (ring * 60)
+                if ring_radius < max_screen_radius and ring_alpha > 0:
+                    # Create surface for alpha blending
+                    ring_surf = pygame.Surface(screen.get_size(), pygame.SRCALPHA)
+                    pygame.draw.circle(ring_surf, (100, 0, 200, ring_alpha), (int(self.center_x), int(self.center_y)), ring_radius, 4)
+                    screen.blit(ring_surf, (0, 0))
+    
+    def is_finished(self) -> bool:
+        """Check if black hole effect is finished"""
+        return self.elapsed >= self.duration
+
+
+class WhiteSingularityEffect:
+    """White singularity collapse effect"""
+    
+    def __init__(self, center_x: float, center_y: float):
+        self.center_x = center_x
+        self.center_y = center_y
+        self.elapsed = 0.0
+        self.duration = 1.0  # 1.0 second to collapse - faster for less lag
+        # Calculate radius to cover entire screen from center
+        import math
+        # Assume screen is roughly 800x600, but use a large value to be safe
+        self.max_radius = 2000
+    
+    def update(self, dt: float):
+        """Update singularity collapse"""
+        self.elapsed += dt
+    
+    def draw(self, screen: pygame.Surface):
+        """Draw collapsing white singularity"""
+        if self.elapsed >= self.duration:
+            return
+            
+        import pygame
+        import random
+        import math
+        
+        # Calculate screen diagonal for full coverage
+        screen_width, screen_height = screen.get_size()
+        max_screen_radius = int(math.sqrt(screen_width**2 + screen_height**2))
+        
+        # Calculate current radius (shrinking from screen diagonal to 0)
+        progress = self.elapsed / self.duration
+        current_radius = int(max_screen_radius * (1.0 - progress ** 0.5))  # Slower initial shrink
+        
+        if current_radius <= 0:
+            return
+            
+        # Fill entire screen with white first
+        screen.fill((255, 255, 255))
+        
+        # Draw the shrinking singularity with much fewer layers for performance
+        if current_radius > 0:
+            # Draw just 3-4 concentric circles instead of many layers
+            for i in range(4):  # Much fewer layers
+                layer_radius = current_radius - (i * current_radius // 4)
+                if layer_radius > 0:
+                    brightness = 255 - (i * 40)  # Decreasing brightness
+                    color = (brightness, brightness, brightness)
+                    pygame.draw.circle(screen, color, (int(self.center_x), int(self.center_y)), layer_radius)
+        
+        # Add simple pulsing core (reduced complexity)
+        if current_radius > 10:
+            core_radius = max(6, current_radius // 10)
+            # Simpler pulse calculation for better performance
+            pulse_intensity = 200 + int(55 * ((self.elapsed * 8) % 1.0))  # Simpler pulsing
+            pygame.draw.circle(screen, (255, 255, 255), 
+                             (int(self.center_x), int(self.center_y)), core_radius)
+    
+    def is_finished(self) -> bool:
+        """Check if singularity effect is finished"""
+        return self.elapsed >= self.duration

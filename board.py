@@ -580,8 +580,8 @@ class Board:
             # Lightning + Bomb = Energized Bomb
             frozenset([SpecialTileType.LIGHTNING, SpecialTileType.BOMB]): SpecialTileType.ENERGIZED_BOMB,
             
-            # Lightning + Lightning = Board Wipe
-            frozenset([SpecialTileType.LIGHTNING, SpecialTileType.LIGHTNING]): SpecialTileType.BOARD_WIPE,
+            # Lightning + Lightning = Lightning Cross
+            frozenset([SpecialTileType.LIGHTNING, SpecialTileType.LIGHTNING]): SpecialTileType.LIGHTNING_CROSS,
             
             # Rocket + Rocket = Simple Cross (1x1 cross)
             frozenset([SpecialTileType.ROCKET_HORIZONTAL, SpecialTileType.ROCKET_VERTICAL]): SpecialTileType.SIMPLE_CROSS,
@@ -595,6 +595,9 @@ class Board:
             # Rocket + Lightning combination
             frozenset([SpecialTileType.ROCKET_HORIZONTAL, SpecialTileType.LIGHTNING]): SpecialTileType.ROCKET_LIGHTNING,
             frozenset([SpecialTileType.ROCKET_VERTICAL, SpecialTileType.LIGHTNING]): SpecialTileType.ROCKET_LIGHTNING,
+            
+            # Boardwipe + Boardwipe = Reality Break
+            frozenset([SpecialTileType.BOARD_WIPE, SpecialTileType.BOARD_WIPE]): SpecialTileType.REALITY_BREAK,
         }
         
         # Check for same-type rocket combinations first

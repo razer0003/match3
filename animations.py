@@ -67,6 +67,10 @@ class SwapAnimation(Animation):
         self.current_pos2 = pos2
     
     def update(self, dt: float) -> bool:
+        # Debug output for boss animations
+        if hasattr(self, 'tile_pos1') and getattr(self, 'tile_pos1', None) is not None:
+            print(f"SwapAnimation update: dt={dt:.4f}, elapsed={self.elapsed:.4f}, duration={self.duration:.4f}, progress={self.get_progress():.4f}")
+        
         completed = super().update(dt)
         progress = self.get_progress()
         
@@ -76,6 +80,9 @@ class SwapAnimation(Animation):
         # Interpolate positions
         self.current_pos1 = self.lerp_pos(self.start_pos1, self.start_pos2, eased_progress)
         self.current_pos2 = self.lerp_pos(self.start_pos2, self.start_pos1, eased_progress)
+        
+        if hasattr(self, 'tile_pos1') and getattr(self, 'tile_pos1', None) is not None and completed:
+            print(f"SwapAnimation COMPLETED: final elapsed={self.elapsed:.4f}, duration={self.duration:.4f}")
         
         return completed
     

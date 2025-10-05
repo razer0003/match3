@@ -19,6 +19,8 @@ class SpecialTileType(Enum):
     ROCKET_BOARDWIPE = "rocket_boardwipe"
     ROCKET_LIGHTNING = "rocket_lightning"
     SIMPLE_CROSS = "simple_cross"  # For rocket+rocket combinations
+    LIGHTNING_CROSS = "lightning_cross"  # For lightning+lightning combinations
+    REALITY_BREAK = "reality_break"  # For boardwipe+boardwipe combinations
 
 class SpecialTile(ABC):
     """Base class for all special tiles"""
@@ -504,6 +506,80 @@ class SimpleCrossTile(SpecialTile):
     def get_score_bonus(self) -> int:
         return 2000
 
+class LightningCrossTile(SpecialTile):
+    """Lightning Cross - Creates cross pattern of lightning arcs across the board"""
+    
+    def __init__(self):
+        super().__init__(SpecialTileType.LIGHTNING_CROSS)
+        self.requires_special_handling = True
+    
+    def get_affected_positions(self, board, activation_pos: Tuple[int, int]) -> List[Tuple[int, int]]:
+        """Get all positions affected by the lightning cross (all 4 phases combined)"""
+        positions = []
+        
+        # Phase 1: Top-left to bottom-right diagonal
+        for i in range(min(board.height, board.width)):
+            if i < board.height and i < board.width:
+                positions.append((i, i))
+        
+        # Phase 2: Top-middle to bottom-middle (vertical)
+        center_col = board.width // 2
+        for row in range(board.height):
+            positions.append((row, center_col))
+        
+        # Phase 3: Top-right to bottom-left diagonal
+        for i in range(min(board.height, board.width)):
+            if i < board.height and (board.width - 1 - i) >= 0:
+                positions.append((i, board.width - 1 - i))
+        
+        # Phase 4: Middle-right to middle-left (horizontal)
+        center_row = board.height // 2
+        for col in range(board.width):
+            positions.append((center_row, col))
+        
+        # Remove duplicates
+        return list(set(positions))
+    
+    def get_visual_representation(self):
+        """Return visual representation for lightning cross tile"""
+        return {
+            'symbol': '⚡',
+            'color': (255, 255, 255),  # Bright white
+            'background_color': (75, 0, 130),  # Indigo background
+            'effect_color': (255, 255, 0)  # Bright yellow effect
+        }
+    
+    def get_score_bonus(self) -> int:
+        return 3000  # Higher score for dramatic cross lightning effect
+
+class RealityBreakTile(SpecialTile):
+    """Reality Break - Ultimate combo that breaks the 4th wall"""
+    
+    def __init__(self, color=None):
+        super().__init__(SpecialTileType.REALITY_BREAK, color)
+        self.requires_special_handling = True
+    
+    def get_affected_positions(self, board, activation_pos: Tuple[int, int]) -> List[Tuple[int, int]]:
+        """Reality Break affects the entire board and beyond"""
+        positions = []
+        # Affect all board positions
+        for row in range(board.height):
+            for col in range(board.width):
+                positions.append((row, col))
+        return positions
+    
+    def get_visual_representation(self) -> dict:
+        return {
+            'sprite_type': 'boardwipe',  # Use boardwipe sprite but with special effects
+            'symbol': '∞',  # Infinity symbol for reality break
+            'color': (255, 255, 255),
+            'background_color': (0, 0, 0),  # Black background
+            'effect_color': (255, 255, 255)  # White effect
+        }
+    
+    def get_score_bonus(self) -> int:
+        return 10000  # Massive score bonus for the ultimate combo!
+
 def create_special_tile(tile_type: SpecialTileType, **kwargs) -> SpecialTile:
     """Factory function to create special tiles"""
     if tile_type in [SpecialTileType.ROCKET_HORIZONTAL, SpecialTileType.ROCKET_VERTICAL]:
@@ -541,5 +617,11 @@ def create_special_tile(tile_type: SpecialTileType, **kwargs) -> SpecialTile:
     
     elif tile_type == SpecialTileType.SIMPLE_CROSS:
         return SimpleCrossTile(kwargs.get('color'))
+    
+    elif tile_type == SpecialTileType.LIGHTNING_CROSS:
+        return LightningCrossTile()
+    
+    elif tile_type == SpecialTileType.REALITY_BREAK:
+        return RealityBreakTile(kwargs.get('color'))
     
     raise ValueError(f"Unknown special tile type: {tile_type}")

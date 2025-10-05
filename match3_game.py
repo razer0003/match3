@@ -8,6 +8,9 @@ from board import Board, Tile, TileColor, Match, MatchType
 from animations import FallAnimation, SwapAnimation, PulseAnimation, ParticleEffect
 from special_tiles import SpecialTile, SpecialTileType
 from arcade_particles import PixelParticleSystem
+from levels import get_level_config, LevelConfig
+from level_select import LevelSelectScreen
+from boss_ai import Match3AI, AIConfig, AIDifficulty
 
 # Initialize Pygame
 pygame.init()
@@ -135,7 +138,7 @@ class SpriteManager:
         return hasattr(self, 'border_sprite') and self.border_sprite is not None
 
 class Match3Game:
-    def __init__(self):
+    def __init__(self, level: int = 1):
         self.screen = pygame.display.set_mode((WINDOW_WIDTH, WINDOW_HEIGHT))
         pygame.display.set_caption("Match 3 Game")
         self.clock = pygame.time.Clock()
@@ -158,6 +161,28 @@ class Match3Game:
         self.pulse_animations = []
         self.particle_effects = []
         self.pixel_particles = PixelParticleSystem()
+        
+        # Boss board animation systems
+        self.boss_fall_animations = []
+        self.boss_swap_animations = []
+        self.boss_animating = False
+        self.boss_move_delay = 0.0  # Delay between boss moves
+        self.boss_move_cooldown = 2.0  # 2 seconds between moves
+        
+        # Boss board combo animation states
+        self.boss_bomb_boardwipe_active = False
+        self.boss_bomb_boardwipe_positions = []
+        self.boss_bomb_boardwipe_timer = 0
+        self.boss_bomb_boardwipe_detonation_timer = 0
+        self.boss_bomb_boardwipe_detonation_index = 0
+        self.boss_rocket_lightning_active = False
+        self.boss_rocket_lightning_position = None
+        self.boss_rocket_lightning_timer = 0.0
+        self.boss_rocket_lightning_phase = None
+        self.boss_reality_break_active = False
+        self.boss_reality_break_position = None
+        self.boss_reality_break_timer = 0.0
+        self.boss_reality_break_phase = None
         
         # Bomb boardwipe animation state
         self.bomb_boardwipe_active = False
@@ -193,9 +218,10 @@ class Match3Game:
         self.black_hole_phase = 'condensing'  # 'condensing' or 'exploding'
         self.original_tile_positions = {}  # Store original positions for animation
         
-        # Level configuration - first level takes up half the screen
-        self.current_level = 1
-        self.configure_level(self.current_level)
+        # Level configuration
+        self.current_level = level
+        self.level_config = get_level_config(level)
+        self.configure_level()
         
         # Initialize board and sprite manager
         self.board = Board(self.board_width, self.board_height, self.tile_size)
@@ -203,24 +229,53 @@ class Match3Game:
         self.sprite_manager.load_tile_sprites()
         self.board.generate_initial_board()
         
-        # Calculate board position to center it
-        total_board_width = self.board_width * self.tile_size
-        total_board_height = self.board_height * self.tile_size
-        self.board_x = (WINDOW_WIDTH - total_board_width) // 2
-        self.board_y = (WINDOW_HEIGHT - total_board_height) // 2
+        # Boss board for dual board levels
+        self.boss_board = None
+        self.boss_board_x = 0
+        self.boss_board_y = 0
+        
+        # Calculate board positions
+        if self.level_config.dual_board:
+            # Dual board layout - player on left, boss on right
+            total_board_width = self.board_width * self.tile_size
+            total_board_height = self.board_height * self.tile_size
+            
+            # Calculate positions to center both boards with gap to prevent border overlap
+            gap_between_boards = 260  # Gap large enough to prevent border overlap (border padding = 120 each side)
+            total_dual_width = (total_board_width * 2) + gap_between_boards
+            start_x = (WINDOW_WIDTH - total_dual_width) // 2
+            
+            # Player board on the left side
+            self.board_x = start_x
+            self.board_y = (WINDOW_HEIGHT - total_board_height) // 2
+            
+            # Boss board on the right side
+            self.boss_board = Board(self.board_width, self.board_height, self.tile_size)
+            self.boss_board.generate_initial_board()
+            self.boss_board_x = start_x + total_board_width + gap_between_boards
+            self.boss_board_y = (WINDOW_HEIGHT - total_board_height) // 2
+            
+            # Initialize AI for boss board
+            ai_config = AIConfig(AIDifficulty.MEDIUM)  # Default to medium difficulty
+            self.boss_ai = Match3AI(ai_config)
+            self.boss_ai.set_board(self.boss_board)
+        else:
+            # Single board layout - centered
+            total_board_width = self.board_width * self.tile_size
+            total_board_height = self.board_height * self.tile_size
+            self.board_x = (WINDOW_WIDTH - total_board_width) // 2
+            self.board_y = (WINDOW_HEIGHT - total_board_height) // 2
+            self.boss_ai = None  # No AI for single board mode
         
         # Font for UI
         self.font = pygame.font.Font(None, 36)
         self.big_font = pygame.font.Font(None, 72)
     
-    def configure_level(self, level):
+    def configure_level(self):
         """Configure level-specific parameters"""
-        if level == 1:
-            # First level takes up half the 1080p size
-            self.tile_size = 60
-            self.board_width = 8
-            self.board_height = 9  # Fits nicely in half screen height
-        # Add more level configurations here as needed
+        self.tile_size = self.level_config.tile_size
+        self.board_width = self.level_config.width
+        self.board_height = self.level_config.height
     
     def run(self):
         """Main game loop"""
@@ -271,6 +326,7 @@ class Match3Game:
                 SpecialTileType.ROCKET_BOARDWIPE,
                 SpecialTileType.ROCKET_LIGHTNING,
                 SpecialTileType.SIMPLE_CROSS,
+                SpecialTileType.LIGHTNING_CROSS,
             ]
             self.debug_special_type = (self.debug_special_type + 1) % len(special_types)
             current_type = special_types[self.debug_special_type]
@@ -283,9 +339,18 @@ class Match3Game:
     
     def handle_mouse_click(self, pos):
         """Handle mouse clicks for tile selection and swapping"""
-        # Convert screen coordinates to board coordinates
+        # Convert screen coordinates to board coordinates (player board only)
         board_x = pos[0] - self.board_x
         board_y = pos[1] - self.board_y
+        
+        # In dual board mode, only allow interaction with the player board (left side)
+        if self.level_config.dual_board:
+            # Check if click is on the boss board (right side) - ignore it
+            boss_board_x = pos[0] - self.boss_board_x
+            boss_board_y = pos[1] - self.boss_board_y
+            if (0 <= boss_board_x < self.board_width * self.tile_size and 
+                0 <= boss_board_y < self.board_height * self.tile_size):
+                return  # Click was on boss board, ignore
         
         if 0 <= board_x < self.board_width * self.tile_size and 0 <= board_y < self.board_height * self.tile_size:
             col = board_x // self.tile_size
@@ -346,6 +411,7 @@ class Match3Game:
             SpecialTileType.ROCKET_BOARDWIPE,
             SpecialTileType.ROCKET_LIGHTNING,
             SpecialTileType.SIMPLE_CROSS,
+            SpecialTileType.LIGHTNING_CROSS,
         ]
         
         # Get current special tile type with bounds checking
@@ -470,6 +536,50 @@ class Match3Game:
         self.clear_row_cascade(0)
         
         print(f"Starting rocket lightning cascade clearing {len(cascade_rows)} rows!")
+    
+    def handle_reality_break_combo(self, pos, combo_tile):
+        """Handle the ultimate Reality Break combo - breaks the 4th wall!"""
+        # Clear any existing fall animations to prevent interference
+        self.fall_animations.clear()
+        
+        # Remove the combo tile
+        self.board.set_tile(*pos, None)
+        
+        # Set up Reality Break animation state
+        self.reality_break_active = True
+        self.reality_break_timer = 0
+        self.reality_break_phase = 'diagonal_lightning_1'
+        self.reality_tiles_consumed = False  # Reset tile consumption flag
+        
+        # Add massive score for ultimate combo
+        self.score += combo_tile.get_score_bonus()
+        
+        # Start the Reality Break sequence immediately
+        self.start_diagonal_lightning_phase_1()
+        
+        print("REALITY BREAK INITIATED - BREAKING THE 4TH WALL!")
+    
+    def start_diagonal_lightning_phase_1(self):
+        """Phase 1: Red diagonal lightning from top-left to bottom-right"""
+        # Create massive diagonal lightning effect (red)
+        self.pixel_particles.create_diagonal_lightning(
+            start_x=self.board_x,
+            start_y=self.board_y,
+            end_x=self.board_x + self.board_width * self.tile_size,
+            end_y=self.board_y + self.board_height * self.tile_size,
+            color=(255, 0, 0),  # Red lightning
+            thickness=8
+        )
+        
+        # Clear tiles along the diagonal path for visual effect
+        for i in range(min(self.board_height, self.board_width)):
+            if i < self.board_height and i < self.board_width:
+                self.board.set_tile(i, i, None)
+        
+        # Massive screen shake for reality breaking
+        self.start_screen_shake(25.0, 0.5)  # ULTIMATE SHAKE!
+        
+        print("Phase 1: Red diagonal lightning breaks reality!")
     
     def clear_row_cascade(self, row_index):
         """Clear a single row in the cascade with lightning arc effect"""
@@ -716,6 +826,146 @@ class Match3Game:
                 
                 print("Black hole animation completed!")
     
+    def update_reality_break_animation(self, dt):
+        """Update the Reality Break animation through all phases"""
+        self.reality_break_timer += dt
+        
+        if self.reality_break_phase == 'diagonal_lightning_1':
+            # Wait 0.8 seconds then start phase 2 directly (no falling during reality break)
+            if self.reality_break_timer >= 0.8:
+                self.reality_break_phase = 'diagonal_lightning_2'
+                self.reality_break_timer = 0
+                self.start_diagonal_lightning_phase_2()
+                
+        elif self.reality_break_phase == 'diagonal_lightning_2':
+            # Wait 0.8 seconds then start black hole phase directly (no falling during reality break)
+            if self.reality_break_timer >= 0.8:
+                self.reality_break_phase = 'black_hole_expand'
+                self.reality_break_timer = 0
+                self.start_reality_black_hole_phase()
+                
+        elif self.reality_break_phase == 'black_hole_expand':
+            # Clear remaining tiles partway through black hole expansion (after 1.5 seconds)
+            if self.reality_break_timer >= 1.5 and not getattr(self, 'reality_tiles_consumed', False):
+                # Clear any remaining tiles that weren't destroyed by lightning
+                for row in range(self.board.height):
+                    for col in range(self.board.width):
+                        self.board.set_tile(row, col, None)
+                self.reality_tiles_consumed = True
+                print("Black hole consumes remaining tiles!")
+            
+            # Black hole expands for 3 seconds total, consuming everything
+            if self.reality_break_timer >= 3.0:
+                self.reality_break_phase = 'singularity_collapse'
+                self.reality_break_timer = 0
+                self.start_singularity_collapse()
+                
+        elif self.reality_break_phase == 'singularity_collapse':
+            # Singularity collapses in 1.0 second
+            if self.reality_break_timer >= 1.0:
+                self.reality_break_phase = 'complete'
+                self.reality_break_timer = 0
+                self.complete_reality_break()
+    
+    def start_diagonal_lightning_phase_2(self):
+        """Phase 2: Black diagonal lightning from top-right to bottom-left"""
+        # Create massive diagonal lightning effect (black)
+        self.pixel_particles.create_diagonal_lightning(
+            start_x=self.board_x + self.board_width * self.tile_size,
+            start_y=self.board_y,
+            end_x=self.board_x,
+            end_y=self.board_y + self.board_height * self.tile_size,
+            color=(0, 0, 0),  # Black lightning
+            thickness=8
+        )
+        
+        # Clear tiles along the opposite diagonal path for visual effect
+        for i in range(min(self.board_height, self.board_width)):
+            row = i
+            col = (self.board_width - 1) - i
+            if 0 <= row < self.board_height and 0 <= col < self.board_width:
+                self.board.set_tile(row, col, None)
+        
+        # Another massive screen shake
+        self.start_screen_shake(25.0, 0.5)
+        
+        print("Phase 2: Black diagonal lightning tears reality further!")
+    
+    def start_reality_black_hole_phase(self):
+        """Phase 3: Massive black hole that consumes everything including UI"""
+        # Don't clear the board immediately - let tiles be consumed visually first
+        # We'll clear them partway through the black hole expansion
+        
+        # Set black hole parameters for maximum screen coverage
+        center_x = self.screen.get_width() // 2
+        center_y = self.screen.get_height() // 2
+        
+        # Create the ultimate black hole effect that grows to consume the entire screen
+        self.pixel_particles.create_reality_black_hole(center_x, center_y)
+        
+        # Ultimate screen shake as reality breaks down
+        self.start_screen_shake(30.0, 2.0)  # Most intense shake for 2 seconds
+        
+        print("Phase 3: Reality black hole consumes everything!")
+    
+    def start_singularity_collapse(self):
+        """Phase 4: White singularity collapse"""
+        # Create white singularity effect
+        center_x = self.screen.get_width() // 2
+        center_y = self.screen.get_height() // 2
+        
+        self.pixel_particles.create_white_singularity(center_x, center_y)
+        
+        # Final massive shake as reality collapses
+        self.start_screen_shake(35.0, 1.0)
+        
+        print("Phase 4: White singularity collapses reality!")
+    
+    def complete_reality_break(self):
+        """Complete the Reality Break animation and restore normal gameplay"""
+        self.reality_break_active = False
+        self.reality_break_phase = None
+        
+        # Clear all animations and effects
+        self.fall_animations.clear()
+        
+        # Regenerate the board naturally with falling tiles
+        self.create_falling_tiles_for_empty_board()
+        
+        print("REALITY RESTORED - Normal gameplay resumed!")
+    
+    def update_lightning_cross_animation(self, dt):
+        """Update Lightning Cross sequential arc animation"""
+        self.lightning_cross_timer += dt
+        
+        if self.lightning_cross_phase == 'arc_1':
+            # Wait 0.6 seconds then start arc 2
+            if self.lightning_cross_timer >= 0.6:
+                self.lightning_cross_phase = 'arc_2'
+                self.lightning_cross_timer = 0
+                self.start_lightning_cross_arc_2()
+                
+        elif self.lightning_cross_phase == 'arc_2':
+            # Wait 0.6 seconds then start arc 3
+            if self.lightning_cross_timer >= 0.6:
+                self.lightning_cross_phase = 'arc_3'
+                self.lightning_cross_timer = 0
+                self.start_lightning_cross_arc_3()
+                
+        elif self.lightning_cross_phase == 'arc_3':
+            # Wait 0.6 seconds then start arc 4
+            if self.lightning_cross_timer >= 0.6:
+                self.lightning_cross_phase = 'arc_4'
+                self.lightning_cross_timer = 0
+                self.start_lightning_cross_arc_4()
+                
+        elif self.lightning_cross_phase == 'arc_4':
+            # Wait 0.6 seconds then complete
+            if self.lightning_cross_timer >= 0.6:
+                self.lightning_cross_phase = 'complete'
+                self.lightning_cross_timer = 0
+                self.complete_lightning_cross()
+    
     def create_falling_tiles_for_empty_board(self):
         """Create falling tiles to fill an empty board naturally"""
         from board import TileColor, Tile
@@ -772,6 +1022,135 @@ class Match3Game:
                 self.screen_shake_duration = 0
                 self.screen_offset_x = 0
                 self.screen_offset_y = 0
+    
+    def handle_lightning_cross_combo(self, pos, combo_tile):
+        """Handle Lightning Cross combo - sequential lightning arcs across the board"""
+        # Clear any existing fall animations to prevent interference
+        self.fall_animations.clear()
+        
+        # Remove the combo tile
+        self.board.set_tile(*pos, None)
+        
+        # Set up Lightning Cross animation state
+        self.lightning_cross_active = True
+        self.lightning_cross_timer = 0
+        self.lightning_cross_phase = 'arc_1'
+        self.lightning_cross_arc_count = 0
+        
+        # Add massive score for lightning cross combo
+        self.score += combo_tile.get_score_bonus()
+        
+        # Start the Lightning Cross sequence immediately
+        self.start_lightning_cross_arc_1()
+        
+        print("LIGHTNING CROSS ACTIVATED - Arcing across the board!")
+    
+    def start_lightning_cross_arc_1(self):
+        """Phase 1: Diagonal lightning from top-left to bottom-right"""
+        # Create diagonal lightning effect (yellow/white)
+        self.pixel_particles.create_diagonal_lightning(
+            start_x=self.board_x,
+            start_y=self.board_y,
+            end_x=self.board_x + self.board_width * self.tile_size,
+            end_y=self.board_y + self.board_height * self.tile_size,
+            color=(255, 255, 0),  # Yellow lightning
+            thickness=6
+        )
+        
+        # Clear tiles along the diagonal path
+        for i in range(min(self.board_height, self.board_width)):
+            if i < self.board_height and i < self.board_width:
+                self.board.set_tile(i, i, None)
+        
+        # Screen shake for lightning impact
+        self.start_screen_shake(20.0, 0.4)
+        
+        print("Phase 1: Top-left to bottom-right diagonal lightning!")
+    
+    def start_lightning_cross_arc_2(self):
+        """Phase 2: Vertical lightning from top middle to bottom middle"""
+        mid_col = self.board_width // 2
+        
+        # Create vertical lightning effect (blue/white)
+        self.pixel_particles.create_diagonal_lightning(
+            start_x=self.board_x + mid_col * self.tile_size + self.tile_size // 2,
+            start_y=self.board_y,
+            end_x=self.board_x + mid_col * self.tile_size + self.tile_size // 2,
+            end_y=self.board_y + self.board_height * self.tile_size,
+            color=(100, 200, 255),  # Blue lightning
+            thickness=6
+        )
+        
+        # Clear tiles along the vertical column
+        for row in range(self.board_height):
+            if 0 <= mid_col < self.board_width:
+                self.board.set_tile(row, mid_col, None)
+        
+        # Screen shake for lightning impact
+        self.start_screen_shake(20.0, 0.4)
+        
+        print("Phase 2: Top to bottom vertical lightning!")
+    
+    def start_lightning_cross_arc_3(self):
+        """Phase 3: Diagonal lightning from top-right to bottom-left"""
+        # Create diagonal lightning effect (purple/white)
+        self.pixel_particles.create_diagonal_lightning(
+            start_x=self.board_x + self.board_width * self.tile_size,
+            start_y=self.board_y,
+            end_x=self.board_x,
+            end_y=self.board_y + self.board_height * self.tile_size,
+            color=(200, 100, 255),  # Purple lightning
+            thickness=6
+        )
+        
+        # Clear tiles along the opposite diagonal
+        for i in range(min(self.board_height, self.board_width)):
+            row = i
+            col = (self.board_width - 1) - i
+            if 0 <= row < self.board_height and 0 <= col < self.board_width:
+                self.board.set_tile(row, col, None)
+        
+        # Screen shake for lightning impact
+        self.start_screen_shake(20.0, 0.4)
+        
+        print("Phase 3: Top-right to bottom-left diagonal lightning!")
+    
+    def start_lightning_cross_arc_4(self):
+        """Phase 4: Horizontal lightning from middle left to middle right"""
+        mid_row = self.board_height // 2
+        
+        # Create horizontal lightning effect (red/orange)
+        self.pixel_particles.create_diagonal_lightning(
+            start_x=self.board_x,
+            start_y=self.board_y + mid_row * self.tile_size + self.tile_size // 2,
+            end_x=self.board_x + self.board_width * self.tile_size,
+            end_y=self.board_y + mid_row * self.tile_size + self.tile_size // 2,
+            color=(255, 150, 50),  # Orange lightning
+            thickness=6
+        )
+        
+        # Clear tiles along the horizontal row
+        for col in range(self.board_width):
+            if 0 <= mid_row < self.board_height:
+                self.board.set_tile(mid_row, col, None)
+        
+        # Screen shake for lightning impact
+        self.start_screen_shake(20.0, 0.4)
+        
+        print("Phase 4: Left to right horizontal lightning!")
+    
+    def complete_lightning_cross(self):
+        """Complete the Lightning Cross animation and restore normal gameplay"""
+        self.lightning_cross_active = False
+        self.lightning_cross_phase = None
+        
+        # Clear all animations and effects
+        self.fall_animations.clear()
+        
+        # Apply gravity and create falling tiles for the empty spaces
+        self.start_fall_animation()
+        
+        print("Lightning Cross complete - Board refilling!")
     
     def are_adjacent(self, pos1, pos2):
         """Check if two positions are adjacent (horizontally or vertically)"""
@@ -831,6 +1210,8 @@ class Match3Game:
                     self.handle_rocket_boardwipe_combo(combo_pos, combo_tile)
                 elif combo_tile.tile_type == SpecialTileType.ROCKET_LIGHTNING:
                     self.handle_rocket_lightning_combo(combo_pos, combo_tile)
+                elif combo_tile.tile_type == SpecialTileType.REALITY_BREAK:
+                    self.handle_reality_break_combo(combo_pos, combo_tile)
                 return
             
             # Store tile positions BEFORE activation for black hole animation
@@ -996,11 +1377,13 @@ class Match3Game:
                     fall_anim.is_existing_tile = True
                     self.fall_animations.append(fall_anim)
         
-        # Fill empty spaces with new tiles (they'll fall from above)
-        self.board.fill_empty_spaces_with_fall_data()
-        
-        # Create fall animations for new tiles (with slight delay)
-        self.create_new_tile_animations()
+        # During Reality Break, don't fill empty spaces with new tiles
+        if not hasattr(self, 'reality_break_phase') or self.reality_break_phase is None:
+            # Fill empty spaces with new tiles (they'll fall from above)
+            self.board.fill_empty_spaces_with_fall_data()
+            
+            # Create fall animations for new tiles (with slight delay)
+            self.create_new_tile_animations()
     
     def create_new_tile_animations(self):
         """Create fall animations for newly spawned tiles"""
@@ -1049,9 +1432,12 @@ class Match3Game:
                 # No more moves available, shuffle the board
                 self.board.shuffle()
     
-    def create_special_effect_particles(self, pos, special_tile):
+    def create_special_effect_particles(self, pos, special_tile, boss_board=False):
         """Create particle effects for special tile activation"""
-        screen_pos = self.get_tile_screen_pos(pos)
+        if boss_board:
+            screen_pos = self.get_boss_tile_screen_pos(pos)
+        else:
+            screen_pos = self.get_tile_screen_pos(pos)
         visual_data = special_tile.get_visual_representation()
         effect_color = visual_data.get('effect_color', (255, 255, 255))
         
@@ -1066,42 +1452,64 @@ class Match3Game:
         
         # Check if it's a rocket and create rocket trail effect
         elif special_tile.tile_type in [SpecialTileType.ROCKET_HORIZONTAL, SpecialTileType.ROCKET_VERTICAL]:
-            # Get board bounds for clipping
-            board_bounds = self._get_board_bounds()
+            # Get appropriate board bounds for clipping
+            if boss_board:
+                board_bounds = self._get_boss_board_bounds()
+                board_x, board_y = self.boss_board_x, self.boss_board_y
+            else:
+                board_bounds = self._get_board_bounds()
+                board_x, board_y = self.board_x, self.board_y
             
             if special_tile.tile_type == SpecialTileType.ROCKET_HORIZONTAL:
                 # For horizontal rockets, use row center and middle of board for Y
                 row, col = pos
                 center_x = screen_pos[0] + self.tile_size // 2
                 # Center the horizontal rocket on the exact middle of the row
-                center_y = self.board_y + (row * self.tile_size) + (self.tile_size // 2)
+                center_y = board_y + (row * self.tile_size) + (self.tile_size // 2)
                 self.pixel_particles.create_rocket_trail(center_x, center_y, 'horizontal', board_bounds)
             else:
                 # For vertical rockets, use column center and middle of board for X
                 row, col = pos
                 # Center the vertical rocket on the exact middle of the column
-                center_x = self.board_x + (col * self.tile_size) + (self.tile_size // 2)
+                center_x = board_x + (col * self.tile_size) + (self.tile_size // 2)
                 center_y = screen_pos[1] + self.tile_size // 2
                 self.pixel_particles.create_rocket_trail(center_x, center_y, 'vertical', board_bounds)
         
         # Check if it's a simple cross (rocket combo) and create cross trail effect
         elif special_tile.tile_type == SpecialTileType.SIMPLE_CROSS:
             # Create cross pattern (both horizontal and vertical) - properly centered
-            board_bounds = self._get_board_bounds()
+            if boss_board:
+                board_bounds = self._get_boss_board_bounds()
+                board_x, board_y = self.boss_board_x, self.boss_board_y
+            else:
+                board_bounds = self._get_board_bounds()
+                board_x, board_y = self.board_x, self.board_y
+            
             row, col = pos
             # Use same centering logic as individual rockets
-            center_x = self.board_x + (col * self.tile_size) + (self.tile_size // 2)
-            center_y = self.board_y + (row * self.tile_size) + (self.tile_size // 2)
+            center_x = board_x + (col * self.tile_size) + (self.tile_size // 2)
+            center_y = board_y + (row * self.tile_size) + (self.tile_size // 2)
             self.pixel_particles.create_rocket_trail(center_x, center_y, 'cross', board_bounds)
+        
+        # Check if it's a lightning cross combo and create sequential lightning arcs
+        elif special_tile.tile_type == SpecialTileType.LIGHTNING_CROSS:
+            self.handle_lightning_cross_combo(pos, special_tile)
+            return  # Special handling, no normal board clearing
         
         # Check if it's a bomb+rocket combo and create large bomb-colored cross trail
         elif special_tile.tile_type == SpecialTileType.BOMB_ROCKET:
             # Create large cross pattern with bomb explosion colors (3-wide cross)
-            board_bounds = self._get_board_bounds()
+            if boss_board:
+                board_bounds = self._get_boss_board_bounds()
+                board_x, board_y = self.boss_board_x, self.boss_board_y
+            else:
+                board_bounds = self._get_board_bounds()
+                board_x, board_y = self.board_x, self.board_y
+            
             row, col = pos
             # Use same centering logic as individual rockets
-            center_x = self.board_x + (col * self.tile_size) + (self.tile_size // 2)
-            center_y = self.board_y + (row * self.tile_size) + (self.tile_size // 2)
+            center_x = board_x + (col * self.tile_size) + (self.tile_size // 2)
+            center_y = board_y + (row * self.tile_size) + (self.tile_size // 2)
             self.pixel_particles.create_bomb_rocket_trail(center_x, center_y, board_bounds)
             # Add massive screen shake for bomb+rocket combo (most powerful)
             self.start_screen_shake(15.0, 0.5)  # Strongest shake for ultimate combo
@@ -1142,6 +1550,15 @@ class Match3Game:
         bottom = self.board_y + (self.board.height * self.tile_size)
         return (left, top, right, bottom)
     
+    def _get_boss_board_bounds(self):
+        """Get the boss board rendering bounds for particle clipping"""
+        # Calculate the actual boss board area bounds
+        left = self.boss_board_x
+        top = self.boss_board_y
+        right = self.boss_board_x + (self.boss_board.width * self.tile_size)
+        bottom = self.boss_board_y + (self.boss_board.height * self.tile_size)
+        return (left, top, right, bottom)
+    
     def update(self, dt):
         """Update game state"""
         # Update bomb boardwipe animation
@@ -1161,12 +1578,32 @@ class Match3Game:
         # Update screen shake
         self.update_screen_shake(dt)
         
+        # Update boss board combo animations
+        if self.boss_bomb_boardwipe_active:
+            self.update_boss_bomb_boardwipe_animation(dt)
+        
+        if self.boss_rocket_lightning_active:
+            self.update_boss_rocket_lightning_animation(dt)
+        
+        if self.boss_reality_break_active:
+            self.update_boss_reality_break_animation(dt)
+        
         # Update black hole animation
         if self.black_hole_active:
             self.update_black_hole_animation(dt)
         
-        # Update swap animations (skip during rocket lightning and black hole)
-        if not self.rocket_lightning_active and not self.black_hole_active:
+        # Update reality break animation
+        if hasattr(self, 'reality_break_active') and self.reality_break_active:
+            self.update_reality_break_animation(dt)
+        
+        # Update lightning cross animation
+        if hasattr(self, 'lightning_cross_active') and self.lightning_cross_active:
+            self.update_lightning_cross_animation(dt)
+        
+        # Update swap animations (skip during special effects)
+        if (not self.rocket_lightning_active and not self.black_hole_active and 
+            not (hasattr(self, 'reality_break_active') and self.reality_break_active) and
+            not (hasattr(self, 'lightning_cross_active') and self.lightning_cross_active)):
             for swap_anim in self.swap_animations[:]:
                 if swap_anim.update(dt):
                     # Animation completed
@@ -1213,38 +1650,92 @@ class Match3Game:
         
         # Update pixel particle system
         self.pixel_particles.update(dt)
+        
+        # Update boss swap animations
+        if (not self.rocket_lightning_active and not self.black_hole_active and 
+            not (hasattr(self, 'reality_break_active') and self.reality_break_active) and
+            not (hasattr(self, 'lightning_cross_active') and self.lightning_cross_active)):
+            for swap_anim in self.boss_swap_animations[:]:
+                if swap_anim.update(dt):
+                    # Animation completed
+                    self.boss_swap_animations.remove(swap_anim)
+                    self.complete_boss_swap_animation(swap_anim)
+        
+        # Update boss fall animations
+        if not self.rocket_lightning_active and not self.black_hole_active:
+            completed_boss_fall_animations = []
+            for fall_anim in self.boss_fall_animations[:]:
+                if fall_anim.update(dt):
+                    # Animation completed - ensure tile is properly placed on boss board
+                    if hasattr(fall_anim, 'tile') and hasattr(fall_anim, 'to_row') and hasattr(fall_anim, 'col'):
+                        self.boss_board.set_tile(fall_anim.to_row, fall_anim.col, fall_anim.tile)
+                    
+                    # Add a small delay before removing to prevent flashing
+                    if not hasattr(fall_anim, 'completion_delay'):
+                        fall_anim.completion_delay = 0.05  # 50ms delay
+                        fall_anim.delay_elapsed = 0.0
+                    
+                    fall_anim.delay_elapsed += dt
+                    if fall_anim.delay_elapsed >= fall_anim.completion_delay:
+                        completed_boss_fall_animations.append(fall_anim)
+                        self.boss_fall_animations.remove(fall_anim)
+            
+            # Check if all boss fall animations are complete
+            if completed_boss_fall_animations and not self.boss_fall_animations:
+                # All boss falling is done, check for cascade matches
+                self.complete_boss_fall_animation()
+
+        # Update boss AI delay timer
+        if self.boss_move_delay > 0:
+            self.boss_move_delay -= dt
+        
+        # Update AI for boss board
+        if (self.boss_ai and not self.animating and not self.boss_animating and 
+            self.boss_move_delay <= 0):
+            self.update_boss_ai()
     
     def draw(self):
         """Draw the entire game"""
         # Apply screen shake offset by temporarily adjusting board position
         original_board_x = self.board_x
         original_board_y = self.board_y
+        original_boss_board_x = self.boss_board_x
+        original_boss_board_y = self.boss_board_y
         
         self.board_x += int(self.screen_offset_x)
         self.board_y += int(self.screen_offset_y)
+        self.boss_board_x += int(self.screen_offset_x)
+        self.boss_board_y += int(self.screen_offset_y)
         
         self.screen.fill(BACKGROUND_COLOR)
         
-        # Draw the border behind everything if available
-        self.draw_border()
-        
-        # Set up clipping area for the game board
-        board_area = pygame.Rect(self.board_x, self.board_y, 
-                                self.board_width * self.tile_size, 
-                                self.board_height * self.tile_size)
-        
-        # Draw the board with clipping
-        old_clip = self.screen.get_clip()
-        self.screen.set_clip(board_area)
-        self.draw_board()
-        self.screen.set_clip(old_clip)
+        if self.level_config.dual_board:
+            # Draw dual board layout
+            self.draw_dual_boards()
+        else:
+            # Draw single board layout
+            # Draw the border behind everything if available
+            self.draw_border()
+            
+            # Set up clipping area for the game board
+            board_area = pygame.Rect(self.board_x, self.board_y, 
+                                    self.board_width * self.tile_size, 
+                                    self.board_height * self.tile_size)
+            
+            # Draw the board with clipping
+            old_clip = self.screen.get_clip()
+            self.screen.set_clip(board_area)
+            self.draw_board()
+            self.screen.set_clip(old_clip)
         
         # Draw particle effects (affected by shake)
         self.pixel_particles.draw(self.screen)
         
-        # Restore original board position
+        # Restore original board positions
         self.board_x = original_board_x
         self.board_y = original_board_y
+        self.boss_board_x = original_boss_board_x
+        self.boss_board_y = original_boss_board_y
         
         # Draw UI elements (outside the clipped area, not affected by shake)
         self.draw_ui()
@@ -1460,8 +1951,8 @@ class Match3Game:
                     color = tile.color.value
                     self.draw_rounded_rect(self.screen, color, tile_rect, 8)
         else:
-            # Don't render anything for empty tiles during rocket lightning cascade
-            if not self.rocket_lightning_active:
+            # Don't render anything for empty tiles during special effects
+            if not self.rocket_lightning_active and not getattr(self, 'reality_break_active', False):
                 color = TileColor.EMPTY.value
                 self.draw_rounded_rect(self.screen, color, tile_rect, 8)
         
@@ -1583,6 +2074,185 @@ class Match3Game:
         pygame.draw.rect(surface, color, rect)
         # Could add actual rounded corner implementation here for better visuals
     
+    def draw_dual_borders(self):
+        """Draw borders around both boards in dual mode"""
+        if self.sprite_manager.has_border_sprite():
+            border_padding = 120  # Extra space around each board
+            border_width = self.board_width * self.tile_size + (border_padding * 2)
+            border_height = self.board_height * self.tile_size + (border_padding * 2)
+            
+            border_sprite = self.sprite_manager.get_border_sprite(border_width, border_height)
+            if border_sprite:
+                # Player board border (left)
+                player_border_x = self.board_x - border_padding
+                player_border_y = self.board_y - border_padding
+                self.screen.blit(border_sprite, (player_border_x, player_border_y))
+                
+                # Boss board border (right)
+                boss_border_x = self.boss_board_x - border_padding
+                boss_border_y = self.boss_board_y - border_padding
+                self.screen.blit(border_sprite, (boss_border_x, boss_border_y))
+
+    def draw_dual_boards(self):
+        """Draw both player and boss boards side by side"""
+        # Draw borders for both boards
+        self.draw_dual_borders()
+        
+        # Draw player board (left side)
+        player_board_area = pygame.Rect(self.board_x, self.board_y, 
+                                      self.board_width * self.tile_size, 
+                                      self.board_height * self.tile_size)
+        
+        old_clip = self.screen.get_clip()
+        self.screen.set_clip(player_board_area)
+        self.draw_board()
+        self.screen.set_clip(old_clip)
+        
+        # Draw boss board (right side)
+        if self.boss_board:
+            boss_board_area = pygame.Rect(self.boss_board_x, self.boss_board_y, 
+                                        self.board_width * self.tile_size, 
+                                        self.board_height * self.tile_size)
+            
+            self.screen.set_clip(boss_board_area)
+            self.draw_boss_board()
+            self.screen.set_clip(old_clip)
+        
+        # Draw labels
+        player_label = self.font.render("PLAYER", True, (255, 255, 255))
+        boss_label = self.font.render("BOSS", True, (255, 100, 100))
+        
+        # Position labels above the boards
+        player_label_x = self.board_x + (self.board_width * self.tile_size - player_label.get_width()) // 2
+        boss_label_x = self.boss_board_x + (self.board_width * self.tile_size - boss_label.get_width()) // 2
+        label_y = self.board_y - 40
+        
+        self.screen.blit(player_label, (player_label_x, label_y))
+        self.screen.blit(boss_label, (boss_label_x, label_y))
+    
+    def draw_boss_board(self):
+        """Draw the boss board with animations"""
+        # Draw static tiles (not involved in animations)
+        for row in range(self.boss_board.height):
+            for col in range(self.boss_board.width):
+                # Skip tiles that are currently animating
+                if self.is_boss_tile_animating(row, col):
+                    continue
+                
+                tile = self.boss_board.get_tile(row, col)
+                if tile:
+                    self.draw_boss_tile_at_position(row, col, tile)
+        
+        # Draw falling tiles on boss board
+        for fall_anim in self.boss_fall_animations:
+            # Calculate current position
+            current_row = (fall_anim.current_y - self.boss_board_y) / self.tile_size
+            self.draw_boss_animated_tile(fall_anim.tile, fall_anim.col, current_row)
+        
+        # Draw swapping tiles on boss board
+        for swap_anim in self.boss_swap_animations:
+            # Always use the original tiles stored in the animation
+            tile1 = swap_anim.original_tile1
+            tile2 = swap_anim.original_tile2
+            
+            if tile1:
+                self.draw_boss_animated_tile_at_screen_pos(tile1, swap_anim.current_pos1)
+            if tile2:
+                self.draw_boss_animated_tile_at_screen_pos(tile2, swap_anim.current_pos2)
+    
+    def draw_boss_tile_at_position(self, row, col, tile):
+        """Draw a single tile on the boss board"""
+        x = self.boss_board_x + col * self.tile_size + self.tile_size // 2
+        y = self.boss_board_y + row * self.tile_size + self.tile_size // 2
+        
+        # Get sprite for the tile
+        if tile.special_tile:
+            sprite = self.sprite_manager.get_special_sprite(tile.special_tile.get_visual_representation().get('sprite_type', 'lightning'), self.tile_size)
+        else:
+            sprite = self.sprite_manager.get_tile_sprite(tile.color, self.tile_size)
+        
+        if sprite:
+            sprite_rect = sprite.get_rect(center=(x, y))
+            self.screen.blit(sprite, sprite_rect)
+        else:
+            # Fallback to colored rectangle
+            tile_rect = pygame.Rect(x - self.tile_size // 2, y - self.tile_size // 2, self.tile_size, self.tile_size)
+            pygame.draw.rect(self.screen, tile.color.value, tile_rect)
+    
+    def is_boss_tile_animating(self, row, col):
+        """Check if a boss tile is currently involved in any animation"""
+        # Check if involved in swap animation
+        for swap_anim in self.boss_swap_animations:
+            if (row, col) in [swap_anim.tile_pos1, swap_anim.tile_pos2]:
+                return True
+        
+        # Check if this position is affected by falling tiles in the same column
+        return self.is_boss_column_affected_by_falling(col, row)
+    
+    def is_boss_column_affected_by_falling(self, col, max_row=None):
+        """Check if a column in boss board is affected by falling tiles"""
+        for fall_anim in self.boss_fall_animations:
+            if fall_anim.col == col:
+                if max_row is None:
+                    return True
+                # Check if the falling tile will affect this row
+                if fall_anim.to_row >= max_row:
+                    return True
+        return False
+    
+    def draw_boss_animated_tile(self, tile, col, row_float):
+        """Draw an animated tile on the boss board at a floating row position"""
+        # Calculate tile position
+        x = self.boss_board_x + col * self.tile_size + self.tile_size // 2
+        y = self.boss_board_y + row_float * self.tile_size + self.tile_size // 2
+        
+        self.draw_boss_animated_tile_at_screen_pos(tile, (x, y))
+    
+    def draw_boss_animated_tile_at_screen_pos(self, tile, screen_pos):
+        """Draw an animated tile on the boss board at a specific screen position"""
+        x, y = screen_pos
+        
+        # Only add special effects for SWAP animations, not fall animations
+        # Check if this is being called from a swap animation by checking if position is between grid positions
+        is_swap_animation = (x % self.tile_size != self.tile_size // 2)
+        
+        if is_swap_animation:
+            # Swap animation - make it very obvious with scaling and glow
+            scale_factor = 1.2  # Make swapping tiles 20% bigger
+            scaled_tile_size = int(self.tile_size * scale_factor)
+            
+            if tile.special_tile:
+                sprite = self.sprite_manager.get_special_sprite(tile.special_tile.get_visual_representation().get('sprite_type', 'lightning'), scaled_tile_size)
+            else:
+                sprite = self.sprite_manager.get_tile_sprite(tile.color, scaled_tile_size)
+            
+            if sprite:
+                sprite_rect = sprite.get_rect(center=(x, y))
+                self.screen.blit(sprite, sprite_rect)
+                
+                # Add a bright red glow for swap animations
+                pygame.draw.circle(self.screen, (255, 0, 0), (int(x), int(y)), scaled_tile_size // 2 + 4, 3)
+            else:
+                # Fallback with red border
+                scaled_half = scaled_tile_size // 2
+                tile_rect = pygame.Rect(x - scaled_half, y - scaled_half, scaled_tile_size, scaled_tile_size)
+                pygame.draw.rect(self.screen, tile.color.value, tile_rect)
+                pygame.draw.rect(self.screen, (255, 0, 0), tile_rect, 3)
+        else:
+            # Fall animation - just draw normally
+            if tile.special_tile:
+                sprite = self.sprite_manager.get_special_sprite(tile.special_tile.get_visual_representation().get('sprite_type', 'lightning'), self.tile_size)
+            else:
+                sprite = self.sprite_manager.get_tile_sprite(tile.color, self.tile_size)
+            
+            if sprite:
+                sprite_rect = sprite.get_rect(center=(x, y))
+                self.screen.blit(sprite, sprite_rect)
+            else:
+                # Fallback to normal colored rectangle
+                tile_rect = pygame.Rect(x - self.tile_size // 2, y - self.tile_size // 2, self.tile_size, self.tile_size)
+                pygame.draw.rect(self.screen, tile.color.value, tile_rect)
+    
     def draw_ui(self):
         """Draw UI elements like score, level info, etc."""
         # Draw score
@@ -1688,7 +2358,435 @@ class Match3Game:
             # Reset to first tile if out of bounds
             self.debug_special_type = 0
             return special_types[0].name
+    
+    def update_boss_ai(self):
+        """Update the AI and execute moves for the boss board"""
+        if not self.boss_ai or not self.boss_board:
+            return
+        
+        # Get AI's chosen move
+        ai_move = self.boss_ai.make_move()
+        
+        if ai_move:
+            # Execute the move on the boss board
+            self.execute_boss_move(ai_move)
+    
+    def execute_boss_move(self, move):
+        """Execute an AI move on the boss board with animations"""
+        from boss_ai import Move
+        
+        # Start boss swap animation
+        pos1, pos2 = move.pos1, move.pos2
+        
+        # Get screen positions for boss board
+        screen_pos1 = self.get_boss_tile_screen_pos(pos1)
+        screen_pos2 = self.get_boss_tile_screen_pos(pos2)
+        
+        # Create swap animation for boss board
+        print(f"Creating boss swap animation: {screen_pos1} -> {screen_pos2}, duration: 1.0s")
+        swap_anim = SwapAnimation(screen_pos1, screen_pos2, 1.0)  # 1.0 second animation for visibility
+        print(f"Animation created: start_pos1={swap_anim.start_pos1}, start_pos2={swap_anim.start_pos2}, duration={swap_anim.duration}")
+        
+        # Store tile positions and original tiles in the animation
+        swap_anim.tile_pos1 = pos1
+        swap_anim.tile_pos2 = pos2
+        swap_anim.original_tile1 = self.boss_board.get_tile(*pos1)
+        swap_anim.original_tile2 = self.boss_board.get_tile(*pos2)
+        
+        self.boss_swap_animations.append(swap_anim)
+        self.boss_animating = True
+        
+        # Reset move delay for next move
+        self.boss_move_delay = self.boss_move_cooldown
+    
+    def get_boss_tile_screen_pos(self, board_pos):
+        """Get screen position for a boss board tile"""
+        row, col = board_pos
+        x = self.boss_board_x + col * self.tile_size + self.tile_size // 2
+        y = self.boss_board_y + row * self.tile_size + self.tile_size // 2
+        return (x, y)
+    
+    def complete_boss_swap_animation(self, swap_anim):
+        """Complete a boss board swap animation and process matches"""
+        pos1, pos2 = swap_anim.tile_pos1, swap_anim.tile_pos2
+        
+        # First, perform the actual swap on the boss board
+        self.boss_board.swap_tiles(pos1, pos2)
+        
+        # Check for combo tiles first
+        combo_tile = self.boss_board.check_for_combo(pos1, pos2)
+        if combo_tile:
+            # Create combo tile at one of the positions
+            combo_pos = pos1  # Place combo at first position
+            from board import Tile
+            from board import TileColor
+            new_tile = Tile(TileColor.RED, special_tile=combo_tile)
+            self.boss_board.set_tile(*combo_pos, new_tile)
+            
+            # Remove the other tile
+            self.boss_board.set_tile(*pos2, None)
+            
+            # Check if this combo needs special handling
+            if hasattr(combo_tile, 'requires_special_handling') and combo_tile.requires_special_handling:
+                from special_tiles import SpecialTileType
+                print(f"Boss created special combo: {combo_tile.tile_type}")
+                if combo_tile.tile_type == SpecialTileType.BOMB_BOARDWIPE:
+                    self.handle_boss_bomb_boardwipe_combo(combo_pos, combo_tile)
+                elif combo_tile.tile_type == SpecialTileType.ROCKET_BOARDWIPE:
+                    self.handle_boss_rocket_boardwipe_combo(combo_pos, combo_tile)
+                elif combo_tile.tile_type == SpecialTileType.ROCKET_LIGHTNING:
+                    self.handle_boss_rocket_lightning_combo(combo_pos, combo_tile)
+                elif combo_tile.tile_type == SpecialTileType.REALITY_BREAK:
+                    self.handle_boss_reality_break_combo(combo_pos, combo_tile)
+                return
+            
+            # Activate the combo tile immediately on boss board
+            result = self.boss_board.activate_special_tile(*combo_pos)
+            if isinstance(result, tuple) and len(result) == 2:
+                affected_positions, activated_tiles = result
+                # Create particle effects for boss special tiles
+                for tile_row, tile_col, special_tile in activated_tiles:
+                    self.create_boss_special_effect_particles((tile_row, tile_col), special_tile)
+            
+            self.apply_boss_board_gravity()
+            return
+        
+        # Check if either tile is a special tile that should be activated
+        special_activated = False
+        
+        tile1 = self.boss_board.get_tile(*pos1)
+        tile2 = self.boss_board.get_tile(*pos2)
+        
+        # Handle board wipe special case
+        from special_tiles import SpecialTileType
+        
+        if tile1 and tile1.is_special() and tile1.special_tile.tile_type == SpecialTileType.BOARD_WIPE:
+            # Board wipe targets the color of the tile it was swapped with
+            target_color = tile2.color if tile2 and not tile2.is_empty() else None
+            if target_color:
+                self.handle_boss_board_wipe_activation(pos1, tile1.special_tile, target_color)
+                special_activated = True
+        elif tile2 and tile2.is_special() and tile2.special_tile.tile_type == SpecialTileType.BOARD_WIPE:
+            # Board wipe targets the color of the tile it was swapped with
+            target_color = tile1.color if tile1 and not tile1.is_empty() else None
+            if target_color:
+                self.handle_boss_board_wipe_activation(pos2, tile2.special_tile, target_color)
+                special_activated = True
+        else:
+            # Handle other special tiles normally
+            if tile1 and tile1.is_special():
+                result = self.boss_board.activate_special_tile(*pos1)
+                if isinstance(result, tuple) and len(result) == 2:
+                    affected_positions, activated_tiles = result
+                    if affected_positions:
+                        # Create particle effects for boss special tiles
+                        for tile_row, tile_col, special_tile in activated_tiles:
+                            self.create_boss_special_effect_particles((tile_row, tile_col), special_tile)
+                        special_activated = True
+            
+            if tile2 and tile2.is_special():
+                result = self.boss_board.activate_special_tile(*pos2)
+                if isinstance(result, tuple) and len(result) == 2:
+                    affected_positions, activated_tiles = result
+                    if affected_positions:
+                        # Create particle effects for boss special tiles
+                        for tile_row, tile_col, special_tile in activated_tiles:
+                            self.create_boss_special_effect_particles((tile_row, tile_col), special_tile)
+                        special_activated = True
+        
+        if special_activated:
+            # Special tile was activated, apply gravity
+            self.apply_boss_board_gravity()
+            return
+        
+        # Check for regular matches
+        matches = self.boss_board.find_all_matches()
+        if matches:
+            self.process_boss_matches(matches)
+        else:
+            self.boss_animating = False
+    
+    def process_boss_matches(self, matches):
+        """Process matches on the boss board and update AI score"""
+        # Process matches using the same logic as player board (creates special tiles)
+        for match in matches:
+            self.boss_board.clear_matches(match)
+        
+        # Apply gravity to boss board with animations
+        self.apply_boss_board_gravity()
+        
+        # Note: Cascades will be checked when fall animations complete
+    
+    def apply_boss_board_gravity(self):
+        """Apply gravity to the boss board with animations"""
+        # Apply gravity to determine new positions
+        fall_data = self.boss_board.apply_gravity_with_animation_data()
+        
+        # Create fall animations for existing tiles
+        for col, tiles_to_fall in fall_data.items():
+            for tile_data in tiles_to_fall:
+                start_y = self.get_boss_tile_screen_pos((tile_data['from_row'], col))[1]
+                end_y = self.get_boss_tile_screen_pos((tile_data['to_row'], col))[1]
+                
+                if start_y != end_y:
+                    # Calculate duration based on fall distance
+                    fall_distance = end_y - start_y
+                    base_duration = 0.3
+                    distance_factor = fall_distance / (self.tile_size * 3)
+                    duration = base_duration + distance_factor * 0.3
+                    
+                    fall_anim = FallAnimation(start_y, end_y, duration)
+                    fall_anim.col = col
+                    fall_anim.to_row = tile_data['to_row']
+                    fall_anim.tile = tile_data['tile']
+                    fall_anim.is_existing_tile = True
+                    self.boss_fall_animations.append(fall_anim)
+        
+        # Fill empty spaces with new tiles
+        self.boss_board.fill_empty_spaces_with_fall_data()
+        
+        # Create fall animations for new tiles
+        self.create_boss_new_tile_animations()
+        
+        # Set boss_animating to True if we have animations
+        if self.boss_fall_animations:
+            self.boss_animating = True
+    
+    def create_boss_new_tile_animations(self):
+        """Create fall animations for newly spawned tiles on boss board"""
+        for col in range(self.boss_board.width):
+            # Find all newly spawned tiles in this column from top to bottom
+            new_tiles = []
+            for row in range(self.boss_board.height):
+                tile = self.boss_board.get_tile(row, col)
+                if tile and hasattr(tile, 'newly_spawned') and tile.newly_spawned:
+                    new_tiles.append((row, tile))
+                    # Remove the newly_spawned flag
+                    delattr(tile, 'newly_spawned')
+            
+            # Create animations for new tiles, stacking them properly above the board
+            for i, (row, tile) in enumerate(new_tiles):
+                # Stack new tiles above the board in reverse order
+                stack_position = len(new_tiles) - i
+                boss_board_y = self.get_boss_tile_screen_pos((0, 0))[1] - self.tile_size
+                start_y = boss_board_y - stack_position * self.tile_size
+                end_y = self.get_boss_tile_screen_pos((row, col))[1]
+                
+                # Calculate fall duration based on distance
+                fall_distance = end_y - start_y
+                fall_duration = 0.3 + (fall_distance / (self.boss_board.height * self.tile_size)) * 0.8
+                
+                fall_anim = FallAnimation(start_y, end_y, fall_duration)
+                fall_anim.col = col
+                fall_anim.to_row = row
+                fall_anim.tile = tile
+                fall_anim.is_new_tile = True
+                self.boss_fall_animations.append(fall_anim)
+    
+    def complete_boss_fall_animation(self):
+        """Complete boss fall animation and check for cascade matches"""
+        # Check for new matches
+        cascade_matches = self.boss_board.find_all_matches()
+        if cascade_matches:
+            # Continue the cascade
+            self.process_boss_matches(cascade_matches)
+        else:
+            # Chain is complete, boss turn is done
+            self.boss_animating = False
+    
+    def create_boss_special_effect_particles(self, position, special_tile):
+        """Create particle effects for boss board special tile activation"""
+        # Convert boss board position to screen position
+        screen_pos = self.get_boss_tile_screen_pos(position)
+        
+        # Create same particle effects as player board but positioned for boss board
+        self.create_special_effect_particles(position, special_tile, boss_board=True)
+    
+    def handle_boss_board_wipe_activation(self, pos, special_tile, target_color):
+        """Handle board wipe activation on boss board"""
+        # Start the board wipe animation for boss board
+        self.board_wipe_active = True
+        self.board_wipe_progress = 0.0
+        self.board_wipe_target_color = target_color
+        self.board_wipe_boss_board = True  # Flag to indicate this is for boss board
+        
+        # Remove the board wipe tile
+        self.boss_board.set_tile(*pos, None)
+        
+        # Create explosion particle effect at activation position
+        screen_pos = self.get_boss_tile_screen_pos(pos)
+        effect = ParticleEffect(screen_pos[0], screen_pos[1], (255, 255, 255), 50, 2.0, "explosion")
+        self.particle_effects.append(effect)
+    
+    def handle_boss_rocket_boardwipe_combo(self, pos, combo_tile):
+        """Handle the rocket + boardwipe combo on boss board"""
+        from special_tiles import create_special_tile, SpecialTileType
+        from board import Tile, TileColor
+        import random
+        
+        # Clear any existing boss fall animations
+        self.boss_fall_animations.clear()
+        
+        # Get rocket positions before removing combo tile
+        rocket_positions = combo_tile.get_rocket_positions(self.boss_board, pos)
+        
+        # Place rockets at selected positions (randomly choose horizontal or vertical)
+        for rocket_pos in rocket_positions:
+            is_horizontal = random.choice([True, False])
+            rocket_type = SpecialTileType.ROCKET_HORIZONTAL if is_horizontal else SpecialTileType.ROCKET_VERTICAL
+            rocket_special = create_special_tile(rocket_type, color=TileColor.RED)
+            rocket_tile = Tile(TileColor.RED, special_tile=rocket_special)
+            self.boss_board.set_tile(*rocket_pos, rocket_tile)
+        
+        # Remove the combo tile after placing rockets
+        self.boss_board.set_tile(*pos, None)
+        
+        # Sort positions from top to bottom, left to right for sequential detonation
+        rocket_positions.sort(key=lambda pos: (pos[0], pos[1]))
+        
+        # Set up animation state for boss board (use separate state variables)
+        self.boss_bomb_boardwipe_active = True
+        self.boss_bomb_boardwipe_positions = rocket_positions
+        self.boss_bomb_boardwipe_timer = 0
+        self.boss_bomb_boardwipe_detonation_timer = 0
+        self.boss_bomb_boardwipe_detonation_index = 0
+        
+        # Immediately start a fall animation to fill gaps
+        self.apply_boss_board_gravity()
+        
+        print(f"Boss placed {len(rocket_positions)} rockets for sequential detonation!")
+    
+    def handle_boss_bomb_boardwipe_combo(self, pos, combo_tile):
+        """Handle the bomb + boardwipe combo on boss board"""
+        from special_tiles import create_special_tile, SpecialTileType
+        from board import Tile, TileColor
+        
+        # Get bomb positions before removing combo tile
+        bomb_positions = combo_tile.get_bomb_positions(self.boss_board, pos)
+        
+        # Place bombs at selected positions
+        for bomb_pos in bomb_positions:
+            bomb_special = create_special_tile(SpecialTileType.BOMB, color=TileColor.RED)
+            bomb_tile = Tile(TileColor.RED, special_tile=bomb_special)
+            self.boss_board.set_tile(*bomb_pos, bomb_tile)
+        
+        # Remove the combo tile
+        self.boss_board.set_tile(*pos, None)
+        
+        # Set up animation state for boss board
+        self.boss_bomb_boardwipe_active = True
+        self.boss_bomb_boardwipe_positions = bomb_positions
+        self.boss_bomb_boardwipe_timer = 0
+        self.boss_bomb_boardwipe_detonation_timer = 0
+        self.boss_bomb_boardwipe_detonation_index = 0
+        
+        self.apply_boss_board_gravity()
+        print(f"Boss placed {len(bomb_positions)} bombs for sequential detonation!")
+    
+    def handle_boss_rocket_lightning_combo(self, pos, combo_tile):
+        """Handle the rocket + lightning combo on boss board"""
+        # Set up rocket lightning animation for boss board
+        self.boss_rocket_lightning_active = True
+        self.boss_rocket_lightning_position = pos
+        self.boss_rocket_lightning_timer = 0.0
+        self.boss_rocket_lightning_phase = 'charging'
+        
+        print("Boss activated rocket lightning combo!")
+    
+    def handle_boss_reality_break_combo(self, pos, combo_tile):
+        """Handle the reality break combo on boss board"""
+        # Set up reality break animation for boss board
+        self.boss_reality_break_active = True
+        self.boss_reality_break_position = pos
+        self.boss_reality_break_timer = 0.0
+        self.boss_reality_break_phase = 'charging'
+        
+        print("Boss activated reality break combo!")
+    
+    def update_boss_bomb_boardwipe_animation(self, dt):
+        """Update boss board bomb/rocket boardwipe animation (sequential detonation)"""
+        if not self.boss_bomb_boardwipe_positions:
+            self.boss_bomb_boardwipe_active = False
+            return
+        
+        self.boss_bomb_boardwipe_timer += dt
+        
+        # Wait initial delay before starting detonations
+        if self.boss_bomb_boardwipe_timer < 0.5:
+            return
+        
+        self.boss_bomb_boardwipe_detonation_timer += dt
+        
+        # Detonate next tile every 0.2 seconds
+        if (self.boss_bomb_boardwipe_detonation_timer >= 0.2 and 
+            self.boss_bomb_boardwipe_detonation_index < len(self.boss_bomb_boardwipe_positions)):
+            
+            # Get the position to detonate
+            pos = self.boss_bomb_boardwipe_positions[self.boss_bomb_boardwipe_detonation_index]
+            
+            # Activate the special tile at this position on boss board
+            tile = self.boss_board.get_tile(*pos)
+            if tile and tile.is_special():
+                result = self.boss_board.activate_special_tile(*pos)
+                if isinstance(result, tuple) and len(result) == 2:
+                    affected_positions, activated_tiles = result
+                    # Create particle effects for boss special tiles
+                    for tile_row, tile_col, special_tile in activated_tiles:
+                        self.create_boss_special_effect_particles((tile_row, tile_col), special_tile)
+            
+            self.boss_bomb_boardwipe_detonation_index += 1
+            self.boss_bomb_boardwipe_detonation_timer = 0
+            
+            # If this was the last detonation, end the animation
+            if self.boss_bomb_boardwipe_detonation_index >= len(self.boss_bomb_boardwipe_positions):
+                self.boss_bomb_boardwipe_active = False
+                self.apply_boss_board_gravity()
+    
+    def update_boss_rocket_lightning_animation(self, dt):
+        """Update boss board rocket lightning combo animation"""
+        # For now, just end the animation quickly - can be enhanced later
+        self.boss_rocket_lightning_active = False
+        print("Boss rocket lightning combo completed!")
+        self.apply_boss_board_gravity()
+    
+    def update_boss_reality_break_animation(self, dt):
+        """Update boss board reality break combo animation"""
+        # For now, just end the animation quickly - can be enhanced later
+        self.boss_reality_break_active = False
+        print("Boss reality break combo completed!")
+        self.apply_boss_board_gravity()
+
+def run_level_select():
+    """Run the level select screen and return selected level"""
+    screen = pygame.display.set_mode((WINDOW_WIDTH, WINDOW_HEIGHT))
+    pygame.display.set_caption("Match 3 - Level Select")
+    clock = pygame.time.Clock()
+    
+    level_select = LevelSelectScreen(WINDOW_WIDTH, WINDOW_HEIGHT)
+    
+    while level_select.running:
+        events = pygame.event.get()
+        for event in events:
+            if event.type == pygame.QUIT:
+                level_select.running = False
+                return None
+        
+        level_select.handle_events(events)
+        level_select.draw(screen)
+        
+        pygame.display.flip()
+        clock.tick(FPS)
+    
+    return level_select.get_selected_level()
 
 if __name__ == "__main__":
-    game = Match3Game()
-    game.run()
+    # Run level select first
+    selected_level = run_level_select()
+    
+    if selected_level is not None:
+        # Start game with selected level
+        game = Match3Game(selected_level)
+        game.run()
+    
+    pygame.quit()
+    sys.exit()

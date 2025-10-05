@@ -178,6 +178,21 @@ class Match3Game:
         self.board_wipe_timer = 0.0
         self.board_wipe_delay = 0.2
         
+        # Screen shake for dramatic effects
+        self.screen_shake_intensity = 0
+        self.screen_shake_duration = 0
+        self.screen_shake_timer = 0
+        self.screen_offset_x = 0
+        self.screen_offset_y = 0
+        
+        # Black hole (bomb+lightning) animation state
+        self.black_hole_active = False
+        self.black_hole_center_x = 0
+        self.black_hole_center_y = 0
+        self.black_hole_timer = 0
+        self.black_hole_phase = 'condensing'  # 'condensing' or 'exploding'
+        self.original_tile_positions = {}  # Store original positions for animation
+        
         # Level configuration - first level takes up half the screen
         self.current_level = 1
         self.configure_level(self.current_level)
@@ -330,10 +345,16 @@ class Match3Game:
             SpecialTileType.ENERGIZED_BOMB,
             SpecialTileType.ROCKET_BOARDWIPE,
             SpecialTileType.ROCKET_LIGHTNING,
+            SpecialTileType.SIMPLE_CROSS,
         ]
         
-        # Get current special tile type
-        current_type = special_types[self.debug_special_type]
+        # Get current special tile type with bounds checking
+        if 0 <= self.debug_special_type < len(special_types):
+            current_type = special_types[self.debug_special_type]
+        else:
+            # Reset to first tile if out of bounds
+            self.debug_special_type = 0
+            current_type = special_types[0]
         
         # Create a special tile
         special_tile = create_special_tile(current_type, color=TileColor.RED)
@@ -350,6 +371,9 @@ class Match3Game:
         """Handle the bomb + boardwipe combo with special animation"""
         from special_tiles import create_special_tile, SpecialTileType
         from board import Tile, TileColor
+        
+        # Clear any existing fall animations to prevent stuck falling tiles
+        self.fall_animations.clear()
         
         # Get bomb positions before removing combo tile
         bomb_positions = combo_tile.get_bomb_positions(self.board, pos)
@@ -387,6 +411,9 @@ class Match3Game:
         from board import Tile, TileColor
         import random
         
+        # Clear any existing fall animations to prevent stuck falling tiles
+        self.fall_animations.clear()
+        
         # Get rocket positions before removing combo tile
         rocket_positions = combo_tile.get_rocket_positions(self.board, pos)
         
@@ -421,6 +448,9 @@ class Match3Game:
     
     def handle_rocket_lightning_combo(self, pos, combo_tile):
         """Handle the rocket + lightning combo with cascading row clearing"""
+        # Clear any existing fall animations to prevent stuck falling tiles
+        self.fall_animations.clear()
+        
         # Remove the combo tile
         self.board.set_tile(*pos, None)
         
@@ -442,15 +472,25 @@ class Match3Game:
         print(f"Starting rocket lightning cascade clearing {len(cascade_rows)} rows!")
     
     def clear_row_cascade(self, row_index):
-        """Clear a single row in the cascade"""
+        """Clear a single row in the cascade with lightning arc effect"""
         if row_index < len(self.rocket_lightning_rows):
             row = self.rocket_lightning_rows[row_index]
             
-            # Clear entire row (no particles, just instant removal)
+            # Determine direction (alternating left-right pattern)
+            direction = 'left_to_right' if row_index % 2 == 0 else 'right_to_left'
+            
+            # Create lightning arc effect that blasts across the row
+            board_bounds = self._get_board_bounds()
+            self.pixel_particles.create_row_lightning_arc(row, direction, board_bounds)
+            
+            # Add dramatic screen shake for each lightning blast
+            self.start_screen_shake(8.0, 0.3)  # Strong shake for 0.3 seconds
+            
+            # Clear entire row
             for col in range(self.board.width):
                 self.board.set_tile(row, col, None)
             
-            print(f"Cleared row {row}")
+            print(f"Cleared row {row} with {direction} lightning arc")
             # Don't start fall animation during cascade - wait until end
     
     def handle_board_wipe_activation(self, pos, board_wipe_tile, target_color):
@@ -480,6 +520,9 @@ class Match3Game:
             
             # Create board wipe arc effect
             self.pixel_particles.create_board_wipe_arcs(center_x, center_y, target_positions, target_color)
+            
+            # Add dramatic screen shake for board wipe
+            self.start_screen_shake(10.0, 0.6)  # Long shake for board wipe
             
             # Set up delayed clearing (0.4 seconds to let particle animation play longer)
             self.board_wipe_active = True
@@ -530,11 +573,20 @@ class Match3Game:
                 
                 if tile and tile.is_special():
                     # Activate this bomb
-                    affected_positions, activated_tiles = self.board.activate_special_tile(*pos)
+                    result = self.board.activate_special_tile(*pos)
+                    if isinstance(result, tuple) and len(result) == 2:
+                        affected_positions, activated_tiles = result
+                    else:
+                        # Handle old return format for compatibility
+                        affected_positions = result if result else []
+                        activated_tiles = [(pos[0], pos[1], tile.special_tile)] if tile.special_tile else []
                     
                     # Create particle effects for all activated special tiles
                     for tile_row, tile_col, special_tile in activated_tiles:
                         self.create_special_effect_particles((tile_row, tile_col), special_tile)
+                    
+                    # Add screen shake for each bomb detonation in sequence
+                    self.start_screen_shake(8.0, 0.2)  # Quick shakes for each bomb
                     
                     # Start a fall animation after each bomb to keep tiles falling
                     self.start_fall_animation()
@@ -555,12 +607,12 @@ class Match3Game:
         """Update the rocket lightning cascade animation"""
         self.rocket_lightning_timer += dt
         
-        # Clear next row every 0.1 seconds
-        if self.rocket_lightning_timer >= 0.1:
+        # Clear next row every 0.4 seconds (slightly slower for more drama)
+        if self.rocket_lightning_timer >= 0.4:
             self.rocket_lightning_row_index += 1
             
             if self.rocket_lightning_row_index < len(self.rocket_lightning_rows):
-                # Clear the next row
+                # Clear the next row with lightning arc
                 self.clear_row_cascade(self.rocket_lightning_row_index)
                 self.rocket_lightning_timer = 0
             else:
@@ -574,6 +626,152 @@ class Match3Game:
                 self.start_fall_animation()
                 
                 print("Rocket lightning cascade completed!")
+    
+    def start_black_hole_animation(self, center_x: float, center_y: float):
+        """Start black hole animation for bomb+lightning combo"""
+        # Clear any existing fall animations to prevent stuck falling tiles
+        self.fall_animations.clear()
+        
+        self.black_hole_active = True
+        self.black_hole_center_x = center_x
+        self.black_hole_center_y = center_y
+        self.black_hole_timer = 0
+        self.black_hole_phase = 'condensing'
+        
+        # Tile positions should already be stored before activation
+        if not hasattr(self, 'original_tile_positions') or not self.original_tile_positions:
+            print("Warning: No tile positions stored for black hole animation!")
+            self.original_tile_positions = {}
+        
+        print(f"Starting black hole animation at ({center_x}, {center_y}) with {len(self.original_tile_positions)} tiles")
+    
+    def update_black_hole_animation(self, dt):
+        """Update the black hole animation"""
+        self.black_hole_timer += dt
+        
+        if self.black_hole_phase == 'condensing':
+            # Phase 1: All tiles shrink and move toward center (1.5 seconds)
+            condensing_duration = 1.5
+            
+            if self.black_hole_timer < condensing_duration:
+                progress = self.black_hole_timer / condensing_duration
+                
+                # Clear the board immediately when condensing starts to hide original tiles
+                if self.black_hole_timer < 0.1:  # Only on first frame
+                    for row in range(self.board.height):
+                        for col in range(self.board.width):
+                            self.board.set_tile(row, col, None)
+                
+                # Update each tile's position to move toward center with easing
+                for (row, col), tile_data in self.original_tile_positions.items():
+                    # Calculate movement toward center with ease-in effect
+                    target_x = self.black_hole_center_x
+                    target_y = self.black_hole_center_y
+                    
+                    # Use quadratic easing for more dramatic effect
+                    eased_progress = progress * progress
+                    
+                    # Lerp from original position to center
+                    tile_data['current_x'] = tile_data['original_x'] + (target_x - tile_data['original_x']) * eased_progress
+                    tile_data['current_y'] = tile_data['original_y'] + (target_y - tile_data['original_y']) * eased_progress
+                    
+            else:
+                # Condensing complete, start explosion
+                self.black_hole_phase = 'exploding'
+                self.black_hole_timer = 0
+                
+                # NOW clear all tiles from the board (board wipe effect)
+                for row in range(self.board.height):
+                    for col in range(self.board.width):
+                        self.board.set_tile(row, col, None)
+                
+                # Create massive lightning explosion
+                self.pixel_particles.create_black_hole_lightning_explosion(
+                    self.black_hole_center_x, self.black_hole_center_y
+                )
+                
+                # Add massive screen shake
+                self.start_screen_shake(25.0, 1.0)  # Even more intense than nuclear bomb
+                
+        elif self.black_hole_phase == 'exploding':
+            # Phase 2: Lightning explosion plays out (2 seconds)
+            explosion_duration = 2.0
+            
+            if self.black_hole_timer >= explosion_duration:
+                # Animation complete
+                self.black_hole_active = False
+                self.original_tile_positions = {}
+                
+                # Clear any existing fall animations to prevent duplicates
+                self.fall_animations.clear()
+                
+                # Instead of instantly filling the board, create falling tiles from the top
+                # Clear the board first
+                for row in range(self.board.height):
+                    for col in range(self.board.width):
+                        self.board.set_tile(row, col, None)
+                
+                # Create tiles above the board that will fall down naturally
+                self.create_falling_tiles_for_empty_board()
+                
+                print("Black hole animation completed!")
+    
+    def create_falling_tiles_for_empty_board(self):
+        """Create falling tiles to fill an empty board naturally"""
+        from board import TileColor, Tile
+        import random
+        
+        # For each column, create enough tiles to fill it
+        for col in range(self.board.width):
+            for row in range(self.board.height):
+                # Choose a random color (same as normal tile generation)
+                valid_colors = [TileColor.RED, TileColor.GREEN, TileColor.BLUE, 
+                               TileColor.YELLOW, TileColor.ORANGE]
+                color = random.choice(valid_colors)
+                tile = Tile(color)
+                
+                # Calculate starting and ending positions
+                start_y = self.board_y - (self.board.height - row) * self.tile_size
+                end_y = self.board_y + row * self.tile_size
+                
+                # Calculate fall duration based on distance
+                fall_distance = end_y - start_y
+                fall_duration = 0.3 + (fall_distance / (self.board_height * self.tile_size)) * 0.8
+                
+                # Create fall animation using the correct constructor
+                fall_anim = FallAnimation(start_y, end_y, fall_duration)
+                fall_anim.col = col
+                fall_anim.to_row = row
+                fall_anim.tile = tile
+                fall_anim.is_new_tile = True
+                
+                self.fall_animations.append(fall_anim)
+    
+    def start_screen_shake(self, intensity: float, duration: float):
+        """Start screen shake effect for dramatic impact"""
+        self.screen_shake_intensity = intensity
+        self.screen_shake_duration = duration
+        self.screen_shake_timer = 0
+    
+    def update_screen_shake(self, dt):
+        """Update screen shake effect"""
+        if self.screen_shake_duration > 0:
+            self.screen_shake_timer += dt
+            
+            if self.screen_shake_timer < self.screen_shake_duration:
+                # Calculate shake based on remaining time
+                progress = 1.0 - (self.screen_shake_timer / self.screen_shake_duration)
+                current_intensity = self.screen_shake_intensity * progress
+                
+                # Random shake offset
+                import random
+                self.screen_offset_x = random.uniform(-current_intensity, current_intensity)
+                self.screen_offset_y = random.uniform(-current_intensity, current_intensity)
+            else:
+                # Shake finished
+                self.screen_shake_duration = 0
+                self.screen_offset_x = 0
+                self.screen_offset_y = 0
     
     def are_adjacent(self, pos1, pos2):
         """Check if two positions are adjacent (horizontally or vertically)"""
@@ -635,8 +833,35 @@ class Match3Game:
                     self.handle_rocket_lightning_combo(combo_pos, combo_tile)
                 return
             
+            # Store tile positions BEFORE activation for black hole animation
+            from special_tiles import SpecialTileType
+            if combo_tile.tile_type == SpecialTileType.ENERGIZED_BOMB:
+                # Store all tile positions before they get cleared
+                self.original_tile_positions = {}
+                for row in range(self.board.height):
+                    for col in range(self.board.width):
+                        tile = self.board.get_tile(row, col)
+                        if tile and not tile.is_empty():
+                            screen_pos = self.get_tile_screen_pos((row, col))
+                            self.original_tile_positions[(row, col)] = {
+                                'original_x': screen_pos[0],
+                                'original_y': screen_pos[1],
+                                'current_x': screen_pos[0],
+                                'current_y': screen_pos[1],
+                                'tile': tile
+                            }
+                print(f"Stored {len(self.original_tile_positions)} tiles for black hole animation")
+            
             # Activate the combo tile immediately
-            affected_positions, activated_tiles = self.board.activate_special_tile(*combo_pos)
+            result = self.board.activate_special_tile(*combo_pos)
+            if isinstance(result, tuple) and len(result) == 2:
+                affected_positions, activated_tiles = result
+            else:
+                # Handle old return format for compatibility
+                print(f"Warning: activate_special_tile returned unexpected format: {result}")
+                affected_positions = result if result else []
+                activated_tiles = [(combo_pos[0], combo_pos[1], combo_tile)] if combo_tile else []
+            
             if affected_positions:
                 # Create particle effects for all activated special tiles
                 for tile_row, tile_col, special_tile in activated_tiles:
@@ -669,7 +894,14 @@ class Match3Game:
         else:
             # Handle other special tiles normally
             if tile1 and tile1.is_special():
-                affected_positions, activated_tiles = self.board.activate_special_tile(*pos1)
+                result = self.board.activate_special_tile(*pos1)
+                if isinstance(result, tuple) and len(result) == 2:
+                    affected_positions, activated_tiles = result
+                else:
+                    # Handle old return format for compatibility
+                    affected_positions = result if result else []
+                    activated_tiles = [(pos1[0], pos1[1], tile1.special_tile)] if tile1.special_tile else []
+                
                 if affected_positions:
                     # Create particle effects for all activated special tiles
                     for tile_row, tile_col, special_tile in activated_tiles:
@@ -678,7 +910,14 @@ class Match3Game:
                     special_activated = True
             
             if tile2 and tile2.is_special():
-                affected_positions, activated_tiles = self.board.activate_special_tile(*pos2)
+                result = self.board.activate_special_tile(*pos2)
+                if isinstance(result, tuple) and len(result) == 2:
+                    affected_positions, activated_tiles = result
+                else:
+                    # Handle old return format for compatibility
+                    affected_positions = result if result else []
+                    activated_tiles = [(pos2[0], pos2[1], tile2.special_tile)] if tile2.special_tile else []
+                
                 if affected_positions:
                     # Create particle effects for all activated special tiles
                     for tile_row, tile_col, special_tile in activated_tiles:
@@ -822,6 +1061,8 @@ class Match3Game:
             center_x = screen_pos[0] + self.tile_size // 2
             center_y = screen_pos[1] + self.tile_size // 2
             self.pixel_particles.create_bomb_explosion(center_x, center_y)
+            # Add dramatic screen shake for bomb explosions
+            self.start_screen_shake(12.0, 0.4)  # Strong shake for bombs
         
         # Check if it's a rocket and create rocket trail effect
         elif special_tile.tile_type in [SpecialTileType.ROCKET_HORIZONTAL, SpecialTileType.ROCKET_VERTICAL]:
@@ -853,12 +1094,42 @@ class Match3Game:
             center_y = self.board_y + (row * self.tile_size) + (self.tile_size // 2)
             self.pixel_particles.create_rocket_trail(center_x, center_y, 'cross', board_bounds)
         
+        # Check if it's a bomb+rocket combo and create large bomb-colored cross trail
+        elif special_tile.tile_type == SpecialTileType.BOMB_ROCKET:
+            # Create large cross pattern with bomb explosion colors (3-wide cross)
+            board_bounds = self._get_board_bounds()
+            row, col = pos
+            # Use same centering logic as individual rockets
+            center_x = self.board_x + (col * self.tile_size) + (self.tile_size // 2)
+            center_y = self.board_y + (row * self.tile_size) + (self.tile_size // 2)
+            self.pixel_particles.create_bomb_rocket_trail(center_x, center_y, board_bounds)
+            # Add massive screen shake for bomb+rocket combo (most powerful)
+            self.start_screen_shake(15.0, 0.5)  # Strongest shake for ultimate combo
+        
         # Check if it's a lightning and create lightning arc effect
         elif special_tile.tile_type == SpecialTileType.LIGHTNING:
             # Create dramatic lightning arc effect
             center_x = screen_pos[0] + self.tile_size // 2
             center_y = screen_pos[1] + self.tile_size // 2
             self.pixel_particles.create_lightning_arc(center_x, center_y)
+            # Add electric screen shake for lightning bolts
+            self.start_screen_shake(6.0, 0.25)  # Medium shake for lightning
+        
+        # Check if it's a mega bomb (bomb+bomb combo) and create nuclear explosion
+        elif special_tile.tile_type == SpecialTileType.MEGA_BOMB:
+            # Create nuclear-style megabomb explosion
+            center_x = screen_pos[0] + self.tile_size // 2
+            center_y = screen_pos[1] + self.tile_size // 2
+            self.pixel_particles.create_nuclear_megabomb(center_x, center_y)
+            # Add MASSIVE screen shake for nuclear megabomb (most intense)
+            self.start_screen_shake(20.0, 0.8)  # ULTIMATE shake for nuclear bomb!
+        
+        # Check if it's an energized bomb (bomb+lightning combo) and create black hole effect
+        elif special_tile.tile_type == SpecialTileType.ENERGIZED_BOMB:
+            # Start black hole animation
+            center_x = screen_pos[0] + self.tile_size // 2
+            center_y = screen_pos[1] + self.tile_size // 2
+            self.start_black_hole_animation(center_x, center_y)
         
         # Skip old particle effects - pixel particles are much more dramatic
     
@@ -885,40 +1156,49 @@ class Match3Game:
         # Update rocket lightning animation
         if self.rocket_lightning_active:
             self.update_rocket_lightning_animation(dt)
-            return  # Don't process other animations while rocket lightning is active
+            # Don't return early - let particle system update
         
-        # Update swap animations
-        for swap_anim in self.swap_animations[:]:
-            if swap_anim.update(dt):
-                # Animation completed
-                self.swap_animations.remove(swap_anim)
-                
-                if not hasattr(swap_anim, 'is_reversal'):
-                    # Check for matches (not for reversals)
-                    self.complete_swap_animation(swap_anim)
+        # Update screen shake
+        self.update_screen_shake(dt)
         
-        # Update fall animations
-        completed_fall_animations = []
-        for fall_anim in self.fall_animations[:]:
-            if fall_anim.update(dt):
-                # Animation completed - ensure tile is properly placed on board
-                if hasattr(fall_anim, 'tile') and hasattr(fall_anim, 'to_row') and hasattr(fall_anim, 'col'):
-                    self.board.set_tile(fall_anim.to_row, fall_anim.col, fall_anim.tile)
-                
-                # Add a small delay before removing to prevent flashing
-                if not hasattr(fall_anim, 'completion_delay'):
-                    fall_anim.completion_delay = 0.05  # 50ms delay
-                    fall_anim.delay_elapsed = 0.0
-                
-                fall_anim.delay_elapsed += dt
-                if fall_anim.delay_elapsed >= fall_anim.completion_delay:
-                    completed_fall_animations.append(fall_anim)
-                    self.fall_animations.remove(fall_anim)
+        # Update black hole animation
+        if self.black_hole_active:
+            self.update_black_hole_animation(dt)
         
-        # Check if all fall animations are complete and we need to check for new matches  
-        if completed_fall_animations and not self.fall_animations:
-            # All falling is done, check for new matches
-            self.complete_fall_animation()
+        # Update swap animations (skip during rocket lightning and black hole)
+        if not self.rocket_lightning_active and not self.black_hole_active:
+            for swap_anim in self.swap_animations[:]:
+                if swap_anim.update(dt):
+                    # Animation completed
+                    self.swap_animations.remove(swap_anim)
+                    
+                    if not hasattr(swap_anim, 'is_reversal'):
+                        # Check for matches (not for reversals)
+                        self.complete_swap_animation(swap_anim)
+        
+        # Update fall animations (skip during rocket lightning and black hole)
+        if not self.rocket_lightning_active and not self.black_hole_active:
+            completed_fall_animations = []
+            for fall_anim in self.fall_animations[:]:
+                if fall_anim.update(dt):
+                    # Animation completed - ensure tile is properly placed on board
+                    if hasattr(fall_anim, 'tile') and hasattr(fall_anim, 'to_row') and hasattr(fall_anim, 'col'):
+                        self.board.set_tile(fall_anim.to_row, fall_anim.col, fall_anim.tile)
+                    
+                    # Add a small delay before removing to prevent flashing
+                    if not hasattr(fall_anim, 'completion_delay'):
+                        fall_anim.completion_delay = 0.05  # 50ms delay
+                        fall_anim.delay_elapsed = 0.0
+                    
+                    fall_anim.delay_elapsed += dt
+                    if fall_anim.delay_elapsed >= fall_anim.completion_delay:
+                        completed_fall_animations.append(fall_anim)
+                        self.fall_animations.remove(fall_anim)
+            
+            # Check if all fall animations are complete and we need to check for new matches  
+            if completed_fall_animations and not self.fall_animations:
+                # All falling is done, check for new matches
+                self.complete_fall_animation()
         
         # Update pulse animations
         for pulse_anim in self.pulse_animations[:]:
@@ -936,6 +1216,13 @@ class Match3Game:
     
     def draw(self):
         """Draw the entire game"""
+        # Apply screen shake offset by temporarily adjusting board position
+        original_board_x = self.board_x
+        original_board_y = self.board_y
+        
+        self.board_x += int(self.screen_offset_x)
+        self.board_y += int(self.screen_offset_y)
+        
         self.screen.fill(BACKGROUND_COLOR)
         
         # Draw the border behind everything if available
@@ -952,7 +1239,14 @@ class Match3Game:
         self.draw_board()
         self.screen.set_clip(old_clip)
         
-        # Draw UI elements (outside the clipped area)
+        # Draw particle effects (affected by shake)
+        self.pixel_particles.draw(self.screen)
+        
+        # Restore original board position
+        self.board_x = original_board_x
+        self.board_y = original_board_y
+        
+        # Draw UI elements (outside the clipped area, not affected by shake)
         self.draw_ui()
         
         # Draw debug overlay if in debug mode
@@ -978,34 +1272,117 @@ class Match3Game:
     
     def draw_board(self):
         """Draw the game board and tiles"""
-        # Draw static tiles (not involved in animations)
-        for row in range(self.board_height):
-            for col in range(self.board_width):
-                # Skip tiles that are currently animating
-                if self.is_tile_animating(row, col):
-                    continue
+        # Skip drawing normal tiles during black hole animation
+        if not (self.black_hole_active and self.black_hole_phase == 'condensing'):
+            # Draw static tiles (not involved in animations)
+            for row in range(self.board_height):
+                for col in range(self.board_width):
+                    # Skip tiles that are currently animating
+                    if self.is_tile_animating(row, col):
+                        continue
+                    
+                    self.draw_tile_at_position(row, col, row, col)
+        
+        # Draw falling tiles (skip during black hole)
+        if not self.black_hole_active:
+            for fall_anim in self.fall_animations:
+                # Calculate current position
+                current_row = (fall_anim.current_y - self.board_y) / self.tile_size
+                self.draw_animated_tile(fall_anim.tile, fall_anim.col, current_row)
+        
+        # Draw swapping tiles (skip during black hole)
+        if not self.black_hole_active:
+            for swap_anim in self.swap_animations:
+                # Use the original tiles stored in the animation (before any swap)
+                tile1 = getattr(swap_anim, 'original_tile1', self.board.get_tile(*swap_anim.tile_pos1))
+                tile2 = getattr(swap_anim, 'original_tile2', self.board.get_tile(*swap_anim.tile_pos2))
                 
-                self.draw_tile_at_position(row, col, row, col)
+                if tile1:
+                    self.draw_animated_tile_at_screen_pos(tile1, swap_anim.current_pos1)
+                if tile2:
+                    self.draw_animated_tile_at_screen_pos(tile2, swap_anim.current_pos2)
         
-        # Draw falling tiles
-        for fall_anim in self.fall_animations:
-            # Calculate current position
-            current_row = (fall_anim.current_y - self.board_y) / self.tile_size
-            self.draw_animated_tile(fall_anim.tile, fall_anim.col, current_row)
-        
-        # Draw swapping tiles
-        for swap_anim in self.swap_animations:
-            # Use the original tiles stored in the animation (before any swap)
-            tile1 = getattr(swap_anim, 'original_tile1', self.board.get_tile(*swap_anim.tile_pos1))
-            tile2 = getattr(swap_anim, 'original_tile2', self.board.get_tile(*swap_anim.tile_pos2))
+        # Draw black hole condensing tiles
+        if self.black_hole_active and self.black_hole_phase == 'condensing':
+            for (row, col), tile_data in self.original_tile_positions.items():
+                # Calculate scale based on distance to center and animation progress
+                distance_to_center = ((tile_data['current_x'] - self.black_hole_center_x) ** 2 + 
+                                    (tile_data['current_y'] - self.black_hole_center_y) ** 2) ** 0.5
+                max_distance = 300  # Approximate max distance from center
+                # Scale based on distance: far away = full size (1.0), close to center = tiny (0.1)
+                distance_factor = min(1.0, distance_to_center / max_distance)
+                scale = max(0.1, 0.1 + distance_factor * 0.9)  # Scale from 0.1 to 1.0 based on distance
+                
+                # Draw tile at current animated position with scaling
+                self.draw_black_hole_tile(tile_data['tile'], tile_data['current_x'], tile_data['current_y'], scale)
+    
+    def draw_black_hole_tile(self, tile, center_x, center_y, scale):
+        """Draw a tile during black hole condensation with scaling using actual tile sprites"""
+        if not tile or tile.is_empty():
+            return
             
-            if tile1:
-                self.draw_animated_tile_at_screen_pos(tile1, swap_anim.current_pos1)
-            if tile2:
-                self.draw_animated_tile_at_screen_pos(tile2, swap_anim.current_pos2)
+        # Calculate scaled size
+        scaled_size = int(self.tile_size * scale)
+        if scaled_size <= 0:
+            return
+            
+        from board import TileColor
+            
+        # Get the appropriate sprite for this tile
+        sprite_surface = None
+        
+        if tile.is_special():
+            # For special tiles, try to get their sprite
+            visual_data = tile.special_tile.get_visual_representation()
+            sprite_type = visual_data.get('sprite_type')
+            if sprite_type and self.sprite_manager.has_special_sprite(sprite_type):
+                sprite_surface = self.sprite_manager.get_special_sprite(sprite_type, scaled_size)
+        
+        # If no special sprite, use regular tile sprite
+        if sprite_surface is None:
+            # Map tile colors to filenames
+            tile_filenames = {
+                TileColor.RED: "redtile.png",
+                TileColor.GREEN: "greentile.png", 
+                TileColor.BLUE: "bluetile.png",
+                TileColor.YELLOW: "yellowtile.png",
+                TileColor.ORANGE: "orangetile.png"
+            }
+            
+            tile_filename = tile_filenames.get(tile.color)
+            if tile_filename:
+                # Load and scale the tile image with crisp scaling (no smoothing)
+                try:
+                    original_sprite = pygame.image.load(f"sprites/tiles/{tile_filename}")
+                    # Use pygame.transform.scale instead of smoothscale for crisp pixels
+                    sprite_surface = pygame.transform.scale(original_sprite, (scaled_size, scaled_size))
+                except Exception as e:
+                    print(f"Failed to load sprite {tile_filename}: {e}")
+                    # Fallback to colored rectangle if sprite loading fails
+                    sprite_surface = pygame.Surface((scaled_size, scaled_size))
+                    sprite_surface.fill(tile.color.value)
+            else:
+                print(f"No filename mapping found for color: {tile.color}")
+                # Fallback to colored rectangle
+                sprite_surface = pygame.Surface((scaled_size, scaled_size))
+                sprite_surface.fill(tile.color.value)
+        
+        # Draw the sprite centered at the current position
+        if sprite_surface:
+            sprite_rect = sprite_surface.get_rect(center=(center_x, center_y))
+            self.screen.blit(sprite_surface, sprite_rect)
+        else:
+            # Ultimate fallback - draw colored rectangle
+            print(f"No sprite available for tile {tile.color}, using colored rectangle")
+            rect = pygame.Rect(center_x - scaled_size // 2, center_y - scaled_size // 2, scaled_size, scaled_size)
+            pygame.draw.rect(self.screen, tile.color.value, rect)
     
     def is_tile_animating(self, row, col):
         """Check if a tile is currently involved in any animation"""
+        # During black hole condensing, all tiles are being animated
+        if self.black_hole_active and self.black_hole_phase == 'condensing':
+            return True
+            
         # Check if involved in swap animation
         for swap_anim in self.swap_animations:
             if (row, col) in [swap_anim.tile_pos1, swap_anim.tile_pos2]:
@@ -1225,9 +1602,6 @@ class Match3Game:
         for effect in self.particle_effects:
             effect.draw(self.screen)
         
-        # Draw pixel particle effects
-        self.pixel_particles.draw(self.screen)
-        
         # Draw instructions
         if self.selected_tile is None:
             if self.fall_animations:
@@ -1304,9 +1678,16 @@ class Match3Game:
             SpecialTileType.ENERGIZED_BOMB,
             SpecialTileType.ROCKET_BOARDWIPE,
             SpecialTileType.ROCKET_LIGHTNING,
+            SpecialTileType.SIMPLE_CROSS,
         ]
         
-        return special_types[self.debug_special_type].name
+        # Add bounds checking to prevent crashes
+        if 0 <= self.debug_special_type < len(special_types):
+            return special_types[self.debug_special_type].name
+        else:
+            # Reset to first tile if out of bounds
+            self.debug_special_type = 0
+            return special_types[0].name
 
 if __name__ == "__main__":
     game = Match3Game()

@@ -333,16 +333,26 @@ class Board:
                     matched_color = tile.color
                     break
             
-            # Clear all matched tiles
+            # Clear matched tiles, but preserve special tiles
             for row, col in match.positions:
+                tile = self.grid[row][col]
+                if tile and tile.is_special():
+                    # Don't clear special tiles - they should only be activated when triggered
+                    continue
                 self.grid[row][col] = None
             
-            # Place the special tile at the center
-            special_tile.color = matched_color
-            self.grid[center_row][center_col] = Tile(matched_color, special_tile)
+            # Place the special tile at the center (only if center position is not a special tile)
+            center_tile = self.grid[center_row][center_col]
+            if not (center_tile and center_tile.is_special()):
+                special_tile.color = matched_color
+                self.grid[center_row][center_col] = Tile(matched_color, special_tile)
         else:
-            # Regular match - just clear the tiles
+            # Regular match - clear tiles but preserve special tiles
             for row, col in match.positions:
+                tile = self.grid[row][col]
+                if tile and tile.is_special():
+                    # Don't clear special tiles - they should only be activated when triggered
+                    continue
                 self.grid[row][col] = None
     
     def get_match_center(self, positions: List[Tuple[int, int]]) -> Tuple[int, int]:

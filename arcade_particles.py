@@ -228,6 +228,20 @@ class PixelParticleSystem:
             self.effects.append(h_effect)
             self.effects.append(v_effect)
     
+    def create_bomb_rocket_trail(self, start_x: float, start_y: float, board_bounds: Tuple[int, int, int, int]):
+        """Create large bomb-colored rocket trail in cross pattern (3-wide)"""
+        # Create three horizontal trails (3-wide effect)
+        for offset in [-1, 0, 1]:
+            adjusted_y = start_y + (offset * 32)  # Assuming 32px tile size for spacing
+            h_effect = BombRocketTrailEffect(start_x, adjusted_y, 'horizontal', board_bounds)
+            self.effects.append(h_effect)
+        
+        # Create three vertical trails (3-wide effect)
+        for offset in [-1, 0, 1]:
+            adjusted_x = start_x + (offset * 32)  # Assuming 32px tile size for spacing
+            v_effect = BombRocketTrailEffect(adjusted_x, start_y, 'vertical', board_bounds)
+            self.effects.append(v_effect)
+    
     def create_lightning_arc(self, x: float, y: float):
         """Create dramatic lightning arc effect"""
         effect = LightningArcEffect(x, y)
@@ -236,6 +250,21 @@ class PixelParticleSystem:
     def create_board_wipe_arcs(self, start_x: float, start_y: float, target_positions: List[Tuple[float, float]], target_color):
         """Create board wipe arcing lines effect"""
         effect = BoardWipeArcEffect(start_x, start_y, target_positions, target_color)
+        self.effects.append(effect)
+    
+    def create_row_lightning_arc(self, row: int, direction: str, board_bounds: Tuple[int, int, int, int]):
+        """Create lightning arc that blasts across an entire row"""
+        effect = RowLightningArcEffect(row, direction, board_bounds)
+        self.effects.append(effect)
+    
+    def create_nuclear_megabomb(self, x: float, y: float):
+        """Create nuclear-style megabomb explosion with shockwave, smoke, and massive explosion"""
+        effect = NuclearMegabombEffect(x, y)
+        self.effects.append(effect)
+    
+    def create_black_hole_lightning_explosion(self, x: float, y: float):
+        """Create massive lightning explosion from black hole center"""
+        effect = BlackHoleLightningExplosion(x, y)
         self.effects.append(effect)
     
     def update(self, dt: float):
@@ -881,6 +910,274 @@ class RocketTrailEffect:
         return len(self.particles) == 0 or self.elapsed > self.duration
 
 
+class BombRocketTrailEffect:
+    """Large bomb-colored rocket trail for bomb+rocket combo (3-wide cross pattern)"""
+    
+    def __init__(self, start_x: float, start_y: float, direction: str, board_bounds: Tuple[int, int, int, int]):
+        self.start_x = start_x
+        self.start_y = start_y
+        self.direction = direction  # 'horizontal' or 'vertical'
+        self.board_bounds = board_bounds  # (left, top, right, bottom)
+        self.particles = []
+        self.duration = 0.8
+        self.elapsed = 0.0
+        
+        # Create the main rocket projectile
+        if direction == 'horizontal':
+            # Create two rockets going left and right
+            self._create_horizontal_bomb_rockets()
+        else:  # vertical
+            # Create two rockets going up and down
+            self._create_vertical_bomb_rockets()
+    
+    def _create_horizontal_bomb_rockets(self):
+        """Create large bomb-colored rockets that zip horizontally"""
+        left, top, right, bottom = self.board_bounds
+        
+        # Rocket going left - BOMB COLORS
+        rocket_left = {
+            'x': self.start_x,
+            'y': self.start_y,
+            'vx': -1200,  # SUPER FAST leftward
+            'vy': 0,
+            'life': 1.0,
+            'max_life': 1.0,
+            'color': (255, 100, 50),  # Bomb orange/red
+            'size': 32,  # MUCH LARGER for 3-wide effect
+            'type': 'bomb_rocket',
+            'trail_timer': 0.0,
+            'bounds_left': left,
+            'bounds_right': right
+        }
+        
+        # Rocket going right - BOMB COLORS
+        rocket_right = {
+            'x': self.start_x,
+            'y': self.start_y,
+            'vx': 1200,  # SUPER FAST rightward
+            'vy': 0,
+            'life': 1.0,
+            'max_life': 1.0,
+            'color': (255, 100, 50),  # Bomb orange/red
+            'size': 32,  # MUCH LARGER for 3-wide effect
+            'type': 'bomb_rocket',
+            'trail_timer': 0.0,
+            'bounds_left': left,
+            'bounds_right': right
+        }
+        
+        self.particles.append(rocket_left)
+        self.particles.append(rocket_right)
+    
+    def _create_vertical_bomb_rockets(self):
+        """Create large bomb-colored rockets that zip vertically"""
+        left, top, right, bottom = self.board_bounds
+        
+        # Rocket going up - BOMB COLORS
+        rocket_up = {
+            'x': self.start_x,
+            'y': self.start_y,
+            'vx': 0,
+            'vy': -1200,  # SUPER FAST upward
+            'life': 1.0,
+            'max_life': 1.0,
+            'color': (255, 100, 50),  # Bomb orange/red
+            'size': 32,  # MUCH LARGER for 3-wide effect
+            'type': 'bomb_rocket',
+            'trail_timer': 0.0,
+            'bounds_top': top,
+            'bounds_bottom': bottom
+        }
+        
+        # Rocket going down - BOMB COLORS
+        rocket_down = {
+            'x': self.start_x,
+            'y': self.start_y,
+            'vx': 0,
+            'vy': 1200,  # SUPER FAST downward
+            'life': 1.0,
+            'max_life': 1.0,
+            'color': (255, 100, 50),  # Bomb orange/red
+            'size': 32,  # MUCH LARGER for 3-wide effect
+            'type': 'bomb_rocket',
+            'trail_timer': 0.0,
+            'bounds_top': top,
+            'bounds_bottom': bottom
+        }
+        
+        self.particles.append(rocket_up)
+        self.particles.append(rocket_down)
+    
+    def update(self, dt: float):
+        """Update bomb rocket trail effect"""
+        self.elapsed += dt
+        
+        for particle in self.particles[:]:
+            # Update rocket position
+            old_x, old_y = particle['x'], particle['y']
+            particle['x'] += particle['vx'] * dt
+            particle['y'] += particle['vy'] * dt
+            
+            # Check if rocket has moved out of bounds
+            if particle['type'] == 'bomb_rocket':  # Only check bounds for main rockets
+                if self.direction == 'horizontal':
+                    if (particle['vx'] < 0 and particle['x'] < particle['bounds_left']) or \
+                       (particle['vx'] > 0 and particle['x'] > particle['bounds_right']):
+                        # Rocket is out of bounds, mark for removal
+                        particle['life'] = 0
+                else:  # vertical
+                    if (particle['vy'] < 0 and particle['y'] < particle['bounds_top']) or \
+                       (particle['vy'] > 0 and particle['y'] > particle['bounds_bottom']):
+                        # Rocket is out of bounds, mark for removal
+                        particle['life'] = 0
+            
+            # Create MASSIVE bomb-colored trail particles as rocket moves
+            if particle['type'] == 'bomb_rocket' and particle['life'] > 0:
+                particle['trail_timer'] += dt
+                if particle['trail_timer'] >= 0.006:  # Even more frequent trail for bomb effect
+                    particle['trail_timer'] = 0.0
+                    
+                    # Create HUGE trail sparks with bomb explosion colors
+                    for i in range(12):  # More trail particles
+                        trail_particle = {
+                            'x': old_x + random.uniform(-20, 20),  # Wider spread
+                            'y': old_y + random.uniform(-20, 20),
+                            'vx': random.uniform(-120, 120),
+                            'vy': random.uniform(-120, 120),
+                            'life': random.uniform(0.5, 1.0),  # Longer lasting
+                            'max_life': random.uniform(0.5, 1.0),
+                            'color': random.choice([
+                                (255, 80, 0),      # Bright orange
+                                (255, 120, 30),    # Orange-red
+                                (255, 160, 50),    # Yellow-orange
+                                (255, 200, 80),    # Golden yellow
+                                (255, 60, 60),     # Red
+                                (200, 40, 40),     # Dark red
+                                (100, 20, 20),     # Very dark red
+                                (50, 50, 50),      # Dark smoke
+                            ]),
+                            'size': random.randint(6, 12),  # MUCH bigger trail particles
+                            'type': 'bomb_trail'
+                        }
+                        self.particles.append(trail_particle)
+            
+            # Update particle life
+            if particle['type'] == 'bomb_trail':
+                particle['life'] -= dt
+            
+            # Remove dead particles
+            if particle['life'] <= 0:
+                self.particles.remove(particle)
+    
+    def draw(self, screen: pygame.Surface):
+        """Draw bomb rocket trail particles"""
+        for particle in self.particles:
+            if particle['life'] <= 0:
+                continue
+                
+            x, y = int(particle['x']), int(particle['y'])
+            life_ratio = particle['life'] / particle['max_life']
+            alpha = int(255 * life_ratio)
+            size = max(1, int(particle['size'] * life_ratio))
+            
+            if particle['type'] == 'bomb_rocket':
+                # Draw main bomb rocket as HUGE elongated shape
+                self._draw_bomb_rocket(screen, x, y, size, particle['color'], alpha, particle['vx'], particle['vy'])
+            else:  # bomb_trail
+                # Draw large bomb-colored trail
+                self._draw_bomb_trail_spark(screen, x, y, size, particle['color'], alpha)
+    
+    def _draw_bomb_rocket(self, screen: pygame.Surface, x: int, y: int, size: int, color: Tuple[int, int, int], alpha: int, vx: float, vy: float):
+        """Draw the main bomb rocket projectile - HUGE with bomb colors"""
+        # Snap to pixel grid but use larger grid for more pixelated look
+        pixel_grid = 4
+        pixel_x = (x // pixel_grid) * pixel_grid
+        pixel_y = (y // pixel_grid) * pixel_grid
+        pixel_size = max(8, (size // 4) * 4)  # Larger base size
+        
+        # Make rocket MASSIVE and elongated in direction of movement
+        if abs(vx) > abs(vy):  # Moving horizontally
+            w = pixel_size * 6  # MUCH MUCH longer
+            h = pixel_size * 2  # Wider too
+        else:  # Moving vertically
+            w = pixel_size * 2  # Wider
+            h = pixel_size * 6  # MUCH MUCH longer
+        
+        # Draw ENORMOUS bright glow first (outermost)
+        if alpha > 80:
+            mega_glow_w = w + 32
+            mega_glow_h = h + 32
+            mega_glow_surf = pygame.Surface((mega_glow_w, mega_glow_h))
+            mega_glow_color = (150, 50, 0)  # Dark orange glow
+            mega_glow_surf.fill(mega_glow_color)
+            mega_glow_surf.set_alpha(alpha // 6)
+            screen.blit(mega_glow_surf, (pixel_x - mega_glow_w // 2, pixel_y - mega_glow_h // 2))
+        
+        # Draw medium glow
+        if alpha > 100:
+            glow_w = w + 16
+            glow_h = h + 16
+            glow_surf = pygame.Surface((glow_w, glow_h))
+            glow_color = (255, 80, 20)  # Bright orange glow
+            glow_surf.fill(glow_color)
+            glow_surf.set_alpha(alpha // 3)
+            screen.blit(glow_surf, (pixel_x - glow_w // 2, pixel_y - glow_h // 2))
+        
+        # Draw bright rocket core
+        surf = pygame.Surface((w, h))
+        surf.fill(color)
+        surf.set_alpha(alpha)
+        screen.blit(surf, (pixel_x - w // 2, pixel_y - h // 2))
+        
+        # Draw ultra-bright inner core
+        inner_w = max(4, w // 3)
+        inner_h = max(4, h // 3)
+        inner_surf = pygame.Surface((inner_w, inner_h))
+        inner_surf.fill((255, 255, 180))  # Hot yellow-white core
+        inner_surf.set_alpha(alpha)
+        screen.blit(inner_surf, (pixel_x - inner_w // 2, pixel_y - inner_h // 2))
+    
+    def _draw_bomb_trail_spark(self, screen: pygame.Surface, x: int, y: int, size: int, color: Tuple[int, int, int], alpha: int):
+        """Draw HUGE bomb-colored trail particles"""
+        # Snap to pixel grid
+        pixel_grid = 4
+        pixel_x = (x // pixel_grid) * pixel_grid
+        pixel_y = (y // pixel_grid) * pixel_grid
+        pixel_size = max(4, (size // 2) * 2)
+        
+        # Draw HUGE cross pattern for massive bomb trail effect
+        # Horizontal bar - enormous
+        h_surf = pygame.Surface((pixel_size * 4, pixel_size))
+        h_surf.fill(color)
+        h_surf.set_alpha(alpha)
+        screen.blit(h_surf, (pixel_x - (pixel_size * 4) // 2, pixel_y - pixel_size // 2))
+        
+        # Vertical bar - enormous
+        v_surf = pygame.Surface((pixel_size, pixel_size * 4))
+        v_surf.fill(color)
+        v_surf.set_alpha(alpha)
+        screen.blit(v_surf, (pixel_x - pixel_size // 2, pixel_y - (pixel_size * 4) // 2))
+        
+        # Add bomb-colored glow around spark if bright enough
+        if alpha > 120:
+            # Glow horizontal bar
+            glow_h_surf = pygame.Surface((pixel_size * 6, pixel_size + 4))
+            glow_color = (min(255, color[0] + 60), min(255, color[1] + 40), 0)  # Bomb glow
+            glow_h_surf.fill(glow_color)
+            glow_h_surf.set_alpha(alpha // 4)
+            screen.blit(glow_h_surf, (pixel_x - (pixel_size * 6) // 2, pixel_y - (pixel_size + 4) // 2))
+            
+            # Glow vertical bar
+            glow_v_surf = pygame.Surface((pixel_size + 4, pixel_size * 6))
+            glow_v_surf.fill(glow_color)
+            glow_v_surf.set_alpha(alpha // 4)
+            screen.blit(glow_v_surf, (pixel_x - (pixel_size + 4) // 2, pixel_y - (pixel_size * 6) // 2))
+    
+    def is_finished(self) -> bool:
+        """Check if bomb rocket trail is finished"""
+        return len(self.particles) == 0 or self.elapsed > self.duration
+
+
 class LightningArcEffect:
     """Dramatic pixel art lightning arc effect with three sequential arcs"""
     
@@ -1159,6 +1456,285 @@ class LightningArcEffect:
     
     def is_finished(self) -> bool:
         """Check if lightning arc is finished"""
+        return len(self.particles) == 0 and self.elapsed > self.duration
+
+
+class RowLightningArcEffect:
+    """Lightning arc that blasts across an entire row for rocket+lightning combo"""
+    
+    def __init__(self, row: int, direction: str, board_bounds: Tuple[int, int, int, int]):
+        self.row = row
+        self.direction = direction  # 'left_to_right' or 'right_to_left'
+        self.board_bounds = board_bounds  # (left, top, right, bottom)
+        self.particles = []
+        self.duration = 0.25  # Slightly longer for more dramatic effect
+        self.elapsed = 0.0
+        
+        # Calculate row position
+        left, top, right, bottom = board_bounds
+        tile_height = (bottom - top) // 10  # Assuming 10 rows
+        self.row_y = top + (row * tile_height) + (tile_height // 2)
+        
+        # Create the lightning arc
+        self._create_row_lightning()
+    
+    def _create_row_lightning(self):
+        """Create lightning arc that blasts across the entire row"""
+        left, top, right, bottom = self.board_bounds
+        
+        if self.direction == 'left_to_right':
+            start_x, end_x = left - 20, right + 20
+        else:  # right_to_left
+            start_x, end_x = right + 20, left - 20
+        
+        # Create multiple lightning bolts for more intensity
+        for bolt_num in range(3):  # 3 parallel lightning bolts
+            segments = 20  # More segments for smoother lightning
+            bolt_offset_y = (bolt_num - 1) * 4  # Spread bolts vertically
+            
+            for i in range(segments + 1):
+                progress = i / segments
+                
+                # Base position along the row
+                base_x = start_x + (end_x - start_x) * progress
+                base_y = self.row_y + bolt_offset_y
+                
+                # Add dramatic lightning zigzag
+                zigzag_intensity = 20 if bolt_num == 0 else 15  # Main bolt has bigger zigzag
+                zigzag_offset_x = random.uniform(-zigzag_intensity, zigzag_intensity) if i > 0 and i < segments else 0
+                zigzag_offset_y = random.uniform(-12, 12)
+                
+                lightning_x = base_x + zigzag_offset_x
+                lightning_y = base_y + zigzag_offset_y
+                
+                # Create lightning segment
+                if i > 0:
+                    # Main bolt is thicker and brighter
+                    thickness = random.randint(3, 6) if bolt_num == 0 else random.randint(2, 4)
+                    intensity = random.uniform(0.9, 1.0) if bolt_num == 0 else random.uniform(0.6, 0.8)
+                    
+                    lightning_particle = {
+                        'x': prev_x,
+                        'y': prev_y,
+                        'next_x': lightning_x,
+                        'next_y': lightning_y,
+                        'life': random.uniform(0.15, 0.25),  # Slightly longer life
+                        'max_life': random.uniform(0.15, 0.25),
+                        'color': random.choice([
+                            (255, 255, 255),  # Pure white (more common)
+                            (220, 240, 255),  # Bright electric blue
+                            (180, 220, 255),  # Electric blue
+                            (255, 240, 200),  # Electric yellow-white
+                        ]),
+                        'thickness': thickness,
+                        'type': 'row_lightning',
+                        'intensity': intensity,
+                        'bolt_id': bolt_num
+                    }
+                    self.particles.append(lightning_particle)
+                
+                prev_x, prev_y = lightning_x, lightning_y
+        
+        # Create more dramatic electrical sparks along the row
+        spark_count = 35  # More sparks for intensity
+        for i in range(spark_count):
+            spark_x = random.uniform(left - 10, right + 10)  # Extend beyond row
+            spark_y = self.row_y + random.uniform(-18, 18)  # Wider spread
+            
+            # Bigger sparks with more varied movement
+            velocity_scale = random.uniform(1.2, 2.0)
+            electric_spark = {
+                'x': spark_x,
+                'y': spark_y,
+                'vx': random.uniform(-120, 120) * velocity_scale,
+                'vy': random.uniform(-60, 60) * velocity_scale,
+                'life': random.uniform(0.08, 0.20),  # Longer lasting sparks
+                'max_life': random.uniform(0.08, 0.20),
+                'color': random.choice([
+                    (255, 255, 255),  # Pure white
+                    (220, 240, 255),  # Bright electric blue
+                    (255, 255, 180),  # Electric yellow
+                    (200, 255, 200),  # Electric green
+                    (255, 200, 255),  # Electric magenta
+                ]),
+                'size': random.randint(4, 8),  # Bigger sparks
+                'type': 'row_spark',
+                'intensity': random.uniform(0.8, 1.0)  # Higher intensity
+            }
+            self.particles.append(electric_spark)
+        
+        # Create dramatic flash effects across the entire row
+        flash_count = 12  # More flash points
+        for i in range(flash_count):
+            flash_x = left + (right - left) * (i / (flash_count - 1))
+            flash_y = self.row_y + random.uniform(-8, 8)
+            
+            # Main bright flash
+            flash_particle = {
+                'x': flash_x,
+                'y': flash_y,
+                'vx': 0,
+                'vy': 0,
+                'life': 0.12,  # Longer flash duration
+                'max_life': 0.12,
+                'color': (255, 255, 255),  # Pure white flash
+                'size': random.randint(12, 18),  # Bigger flash
+                'type': 'row_flash',
+                'intensity': 1.0
+            }
+            self.particles.append(flash_particle)
+            
+            # Add ring of smaller flashes around main flash for dramatic effect
+            for ring_angle in range(0, 360, 60):  # 6 points around each flash
+                import math
+                ring_radius = random.uniform(8, 15)
+                ring_x = flash_x + math.cos(math.radians(ring_angle)) * ring_radius
+                ring_y = flash_y + math.sin(math.radians(ring_angle)) * ring_radius
+                
+                ring_flash = {
+                    'x': ring_x,
+                    'y': ring_y,
+                    'vx': math.cos(math.radians(ring_angle)) * 20,  # Slight outward movement
+                    'vy': math.sin(math.radians(ring_angle)) * 20,
+                    'life': 0.10,
+                    'max_life': 0.10,
+                    'color': random.choice([
+                        (255, 255, 200),  # Yellow-white
+                        (200, 255, 255),  # Cyan-white
+                        (255, 200, 255),  # Magenta-white
+                    ]),
+                    'size': random.randint(6, 10),
+                    'type': 'row_flash',
+                    'intensity': 0.8
+                }
+                self.particles.append(ring_flash)
+    
+    def update(self, dt: float):
+        """Update row lightning arc effect"""
+        self.elapsed += dt
+        
+        for particle in self.particles[:]:
+            if particle['type'] == 'row_lightning':
+                # Lightning segments just fade
+                particle['life'] -= dt
+            
+            elif particle['type'] == 'row_spark':
+                # Sparks move and fade
+                particle['x'] += particle['vx'] * dt
+                particle['y'] += particle['vy'] * dt
+                particle['vx'] *= 0.92  # Air resistance
+                particle['vy'] *= 0.92
+                particle['life'] -= dt
+            
+            elif particle['type'] == 'row_flash':
+                # Flash particles just fade quickly
+                particle['life'] -= dt
+            
+            # Remove dead particles
+            if particle['life'] <= 0:
+                self.particles.remove(particle)
+    
+    def draw(self, screen: pygame.Surface):
+        """Draw row lightning arc particles"""
+        for particle in self.particles:
+            if particle['life'] <= 0:
+                continue
+                
+            life_ratio = particle['life'] / particle['max_life']
+            alpha = int(255 * life_ratio * particle['intensity'])
+            
+            if particle['type'] == 'row_lightning':
+                # Draw lightning bolt segment
+                self._draw_row_lightning_segment(screen, particle, alpha)
+            
+            elif particle['type'] == 'row_spark':
+                # Draw electric spark
+                x, y = int(particle['x']), int(particle['y'])
+                size = max(1, int(particle['size'] * life_ratio))
+                self._draw_row_spark(screen, x, y, size, particle['color'], alpha)
+            
+            elif particle['type'] == 'row_flash':
+                # Draw bright flash
+                x, y = int(particle['x']), int(particle['y'])
+                size = max(2, int(particle['size'] * life_ratio))
+                self._draw_row_flash(screen, x, y, size, particle['color'], alpha)
+    
+    def _draw_row_lightning_segment(self, screen: pygame.Surface, particle, alpha: int):
+        """Draw a row lightning segment"""
+        x1, y1 = int(particle['x']), int(particle['y'])
+        x2, y2 = int(particle['next_x']), int(particle['next_y'])
+        color = particle['color']
+        thickness = particle['thickness']
+        
+        # Draw thick lightning line
+        self._draw_thick_lightning_line(screen, x1, y1, x2, y2, thickness, color, alpha)
+    
+    def _draw_thick_lightning_line(self, screen: pygame.Surface, x1: int, y1: int, x2: int, y2: int, thickness: int, color: Tuple[int, int, int], alpha: int):
+        """Draw a thick pixelated lightning line"""
+        dx = x2 - x1
+        dy = y2 - y1
+        length = max(1, int(math.sqrt(dx * dx + dy * dy)))
+        
+        if length == 0:
+            return
+        
+        # Draw line as series of thick pixels
+        steps = max(1, length // 2)
+        for i in range(steps + 1):
+            progress = i / steps if steps > 0 else 0
+            line_x = int(x1 + dx * progress)
+            line_y = int(y1 + dy * progress)
+            
+            # Snap to pixel grid
+            pixel_x = (line_x // 2) * 2
+            pixel_y = (line_y // 2) * 2
+            pixel_size = thickness * 2
+            
+            surf = pygame.Surface((pixel_size, pixel_size))
+            surf.fill(color)
+            surf.set_alpha(alpha)
+            screen.blit(surf, (pixel_x - pixel_size // 2, pixel_y - pixel_size // 2))
+    
+    def _draw_row_spark(self, screen: pygame.Surface, x: int, y: int, size: int, color: Tuple[int, int, int], alpha: int):
+        """Draw row spark as bright cross"""
+        pixel_x = (x // 2) * 2
+        pixel_y = (y // 2) * 2
+        pixel_size = max(2, (size // 2) * 2)
+        
+        # Horizontal bar
+        h_surf = pygame.Surface((pixel_size * 3, pixel_size))
+        h_surf.fill(color)
+        h_surf.set_alpha(alpha)
+        screen.blit(h_surf, (pixel_x - (pixel_size * 3) // 2, pixel_y - pixel_size // 2))
+        
+        # Vertical bar
+        v_surf = pygame.Surface((pixel_size, pixel_size * 3))
+        v_surf.fill(color)
+        v_surf.set_alpha(alpha)
+        screen.blit(v_surf, (pixel_x - pixel_size // 2, pixel_y - (pixel_size * 3) // 2))
+    
+    def _draw_row_flash(self, screen: pygame.Surface, x: int, y: int, size: int, color: Tuple[int, int, int], alpha: int):
+        """Draw bright row flash"""
+        pixel_x = (x // 2) * 2
+        pixel_y = (y // 2) * 2
+        pixel_size = max(4, (size // 2) * 2)
+        
+        # Main flash
+        surf = pygame.Surface((pixel_size, pixel_size))
+        surf.fill(color)
+        surf.set_alpha(alpha)
+        screen.blit(surf, (pixel_x - pixel_size // 2, pixel_y - pixel_size // 2))
+        
+        # Glow around flash
+        if alpha > 100:
+            glow_size = pixel_size + 6
+            glow_surf = pygame.Surface((glow_size, glow_size))
+            glow_surf.fill((220, 220, 255))  # Light blue glow
+            glow_surf.set_alpha(alpha // 3)
+            screen.blit(glow_surf, (pixel_x - glow_size // 2, pixel_y - glow_size // 2))
+    
+    def is_finished(self) -> bool:
+        """Check if row lightning arc is finished"""
         return len(self.particles) == 0 and self.elapsed > self.duration
 
 
@@ -1559,14 +2135,453 @@ class BoardWipeArcEffect:
             # Top-right diagonal
             d1_surf = pygame.Surface((pixel_size * 2, pixel_size))
             d1_surf.fill(color)
-            d1_surf.set_alpha(alpha // 2)
-            screen.blit(d1_surf, (pixel_x + pixel_size, pixel_y - pixel_size))
+            d1_surf.set_alpha(alpha)
+            screen.blit(d1_surf, (pixel_x + pixel_size // 2, pixel_y - pixel_size * 2))
+
+
+class NuclearMegabombEffect:
+    """Nuclear-style megabomb explosion with shockwave, smoke, and massive explosion"""
+    
+    def __init__(self, x: float, y: float):
+        self.particles = []
+        self.duration = 2.0  # Much faster dramatic effect
+        self.elapsed = 0.0
+        self.center_x = x
+        self.center_y = y
+        
+        # Phase tracking
+        self.shockwave_phase = True
+        self.smoke_phase = False
+        self.explosion_phase = False
+        
+        # Create initial shockwave
+        self._create_initial_shockwave()
+        
+    def _create_initial_shockwave(self):
+        """Create fast white shockwave ring that expands far"""
+        # Create multiple concentric shockwave rings for circular effect
+        for ring in range(3):  # 3 rings for thick circular shockwave
+            for angle in range(0, 360, 3):  # Dense circle of particles
+                angle_rad = math.radians(angle)
+                
+                # Staggered timing for wave effect
+                delay_factor = ring * 0.05
+                speed = 800 - (ring * 100)  # Outer rings faster
+                
+                particle = {
+                    'x': self.center_x,
+                    'y': self.center_y,
+                    'vx': math.cos(angle_rad) * speed,  # VERY fast expansion
+                    'vy': math.sin(angle_rad) * speed,
+                    'life': 0.2 - delay_factor,  # Very quick shockwave
+                    'max_life': 0.2 - delay_factor,
+                    'color': (255, 255, 255) if ring == 0 else (255, 255, 200),
+                    'size': random.randint(4, 8),
+                    'type': 'shockwave'
+                }
+                self.particles.append(particle)
+    
+    def _create_smoke_expansion(self):
+        """Create black smoke expanding to 8x8 tile radius (256px)"""
+        # Dense smoke clouds expanding to 8x8 radius
+        for angle in range(0, 360, 6):  # 60 smoke clouds for density
+            angle_rad = math.radians(angle)
             
-            # Bottom-left diagonal
-            d2_surf = pygame.Surface((pixel_size * 2, pixel_size))
-            d2_surf.fill(color)
-            d2_surf.set_alpha(alpha // 2)
-            screen.blit(d2_surf, (pixel_x - pixel_size * 2, pixel_y + pixel_size))
+            # Fast expanding smoke to reach 8x8 area
+            speed = random.uniform(200, 300)  # Fast enough to reach 256px radius
+            particle = {
+                'x': self.center_x + random.uniform(-32, 32),
+                'y': self.center_y + random.uniform(-32, 32),
+                'vx': math.cos(angle_rad) * speed,
+                'vy': math.sin(angle_rad) * speed,
+                'life': random.uniform(0.6, 0.8),  # Shorter life for faster effect
+                'max_life': random.uniform(0.6, 0.8),
+                'color': random.choice([
+                    (20, 20, 20),   # Very dark gray
+                    (10, 10, 10),   # Almost black
+                    (30, 30, 30),   # Dark gray
+                    (0, 0, 0),      # Pure black
+                    (40, 30, 20),   # Dark brown smoke
+                ]),
+                'size': random.randint(25, 40),  # Much larger smoke clouds
+                'type': 'smoke'
+            }
+            self.particles.append(particle)
+            
+        # Fill in the middle with additional dense smoke
+        for _ in range(80):  # More particles for density
+            angle = random.uniform(0, 2 * math.pi)
+            distance = random.uniform(0, 128)  # Fill center to 4-tile radius
+            
+            particle = {
+                'x': self.center_x + math.cos(angle) * distance,
+                'y': self.center_y + math.sin(angle) * distance,
+                'vx': math.cos(angle) * random.uniform(150, 250),
+                'vy': math.sin(angle) * random.uniform(150, 250),
+                'life': random.uniform(0.5, 0.7),
+                'max_life': random.uniform(0.5, 0.7),
+                'color': random.choice([
+                    (15, 15, 15), (25, 25, 25), (5, 5, 5), (35, 25, 15)
+                ]),
+                'size': random.randint(20, 35),
+                'type': 'smoke'
+            }
+            self.particles.append(particle)
+    
+    def _create_massive_explosion(self):
+        """Create the final massive explosion covering 8x8 tile area"""
+        # ULTRA-MASSIVE CORE EXPLOSION - 8x8 tiles (256px radius)
+        for i in range(50):  # Many more core particles
+            angle = (i / 50) * math.pi * 2
+            speed = random.uniform(300, 450)  # Much faster to reach 8x8 area
+            
+            particle = {
+                'x': self.center_x,
+                'y': self.center_y,
+                'vx': math.cos(angle) * speed,
+                'vy': math.sin(angle) * speed,
+                'life': random.uniform(1.0, 1.5),  # Faster effect
+                'max_life': random.uniform(1.0, 1.5),
+                'color': (255, 255, 150),  # Bright yellow core
+                'size': random.randint(60, 80),  # MASSIVE core pieces
+                'type': 'mega_core'
+            }
+            self.particles.append(particle)
+        
+        # SECONDARY EXPLOSION RING - Fills 6x6 area
+        for i in range(80):  # More particles
+            angle = random.uniform(0, 2 * math.pi)
+            speed = random.uniform(200, 350)  # Faster expansion
+            
+            particle = {
+                'x': self.center_x,
+                'y': self.center_y,
+                'vx': math.cos(angle) * speed,
+                'vy': math.sin(angle) * speed,
+                'life': random.uniform(0.8, 1.2),
+                'max_life': random.uniform(0.8, 1.2),
+                'color': random.choice([
+                    (255, 180, 0),   # Bright orange
+                    (255, 120, 0),   # Dark orange  
+                    (255, 200, 100), # Light orange
+                    (255, 255, 0),   # Yellow
+                    (255, 80, 0),    # Red-orange
+                ]),
+                'size': random.randint(40, 60),  # Much larger particles
+                'type': 'mega_secondary'
+            }
+            self.particles.append(particle)
+        
+        # OUTER DEBRIS FIELD - Fills full 8x8 area
+        for i in range(120):  # Even more particles
+            angle = random.uniform(0, 2 * math.pi)
+            speed = random.uniform(150, 300)  # Fast expansion to edges
+            
+            particle = {
+                'x': self.center_x,
+                'y': self.center_y,
+                'vx': math.cos(angle) * speed,
+                'vy': math.sin(angle) * speed,
+                'life': random.uniform(0.7, 1.0),
+                'max_life': random.uniform(0.7, 1.0),
+                'color': random.choice([
+                    (255, 0, 0),     # Bright red
+                    (200, 0, 0),     # Dark red
+                    (255, 100, 0),   # Orange-red
+                    (150, 50, 0),    # Brown-red
+                    (255, 50, 50),   # Light red
+                    (180, 80, 0),    # Burnt orange
+                ]),
+                'size': random.randint(20, 35),  # Larger debris
+                'type': 'mega_debris'
+            }
+            self.particles.append(particle)
+    
+    def update(self, dt: float):
+        """Update nuclear megabomb effect with phase transitions"""
+        self.elapsed += dt
+        
+        # Phase transitions - Much faster timing!
+        if self.elapsed >= 0.15 and self.shockwave_phase:  # Faster shockwave
+            self.shockwave_phase = False
+            self.smoke_phase = True
+            self._create_smoke_expansion()
+            
+        if self.elapsed >= 0.25 and self.smoke_phase:  # Explosion right after smoke starts
+            self.smoke_phase = False
+            self.explosion_phase = True
+            self._create_massive_explosion()
+        
+        # Update all particles
+        for particle in self.particles[:]:
+            particle['x'] += particle['vx'] * dt
+            particle['y'] += particle['vy'] * dt
+            
+            # Apply different physics per type
+            if particle['type'] == 'shockwave':
+                # Shockwave maintains speed
+                pass
+            elif particle['type'] == 'smoke':
+                # Smoke slows down and rises slightly
+                particle['vx'] *= 0.95
+                particle['vy'] *= 0.95
+                particle['vy'] -= 20 * dt  # Slight upward drift
+            else:
+                # Explosion particles slow down
+                particle['vx'] *= 0.92
+                particle['vy'] *= 0.92
+            
+            particle['life'] -= dt
+            
+            if particle['life'] <= 0:
+                self.particles.remove(particle)
+    
+    def draw(self, screen: pygame.Surface):
+        """Draw nuclear megabomb particles"""
+        for particle in self.particles:
+            if particle['life'] <= 0:
+                continue
+                
+            life_ratio = particle['life'] / particle['max_life']
+            alpha = int(255 * life_ratio)
+            
+            x, y = int(particle['x']), int(particle['y'])
+            size = max(1, int(particle['size'] * life_ratio))
+            color = particle['color']
+            
+            # Draw different types with different styles
+            if particle['type'] == 'shockwave':
+                self._draw_shockwave_particle(screen, x, y, size, color, alpha)
+            elif particle['type'] == 'smoke':
+                self._draw_smoke_particle(screen, x, y, size, color, alpha)
+            else:
+                self._draw_explosion_particle(screen, x, y, size, color, alpha)
+    
+    def _draw_shockwave_particle(self, screen: pygame.Surface, x: int, y: int, size: int, color: Tuple[int, int, int], alpha: int):
+        """Draw bright shockwave particle as larger connected shape"""
+        pixel_size = max(4, size)  # Much larger shockwave particles
+        pixel_x = (x // 2) * 2
+        pixel_y = (y // 2) * 2
+        
+        # Draw as larger connected square for better circle visibility
+        surf = pygame.Surface((pixel_size * 3, pixel_size * 3))
+        surf.fill(color)
+        surf.set_alpha(alpha)
+        screen.blit(surf, (pixel_x - (pixel_size * 3) // 2, pixel_y - (pixel_size * 3) // 2))
+    
+    def _draw_smoke_particle(self, screen: pygame.Surface, x: int, y: int, size: int, color: Tuple[int, int, int], alpha: int):
+        """Draw large smoke cloud"""
+        pixel_size = max(6, size // 2)  # Much larger smoke clouds
+        pixel_x = (x // 4) * 4
+        pixel_y = (y // 4) * 4
+        
+        # Draw as much larger chunky cloud
+        surf = pygame.Surface((pixel_size * 4, pixel_size * 4))
+        surf.fill(color)
+        surf.set_alpha(alpha)
+        screen.blit(surf, (pixel_x - pixel_size * 2, pixel_y - pixel_size * 2))
+    
+    def _draw_explosion_particle(self, screen: pygame.Surface, x: int, y: int, size: int, color: Tuple[int, int, int], alpha: int):
+        """Draw massive explosion particle"""
+        pixel_size = max(8, size // 3)  # Much larger explosion particles
+        pixel_x = (x // 6) * 6
+        pixel_y = (y // 6) * 6
+        
+        # Draw as huge explosion chunks
+        surf = pygame.Surface((pixel_size * 6, pixel_size * 6))
+        surf.fill(color)
+        surf.set_alpha(alpha)
+        screen.blit(surf, (pixel_x - pixel_size * 3, pixel_y - pixel_size * 3))
+    
+    def is_finished(self) -> bool:
+        """Check if effect is finished"""
+        return len(self.particles) == 0 and self.elapsed > 4.0
+
+
+class BlackHoleLightningExplosion:
+    """Massive lightning explosion from black hole center - board wipe effect"""
+    
+    def __init__(self, x: float, y: float):
+        self.particles = []
+        self.duration = 2.0  # 2 second explosion
+        self.elapsed = 0.0
+        self.center_x = x
+        self.center_y = y
+        
+        # Create initial massive lightning explosion
+        self._create_lightning_explosion()
+    
+    def _create_lightning_explosion(self):
+        """Create massive lightning explosion covering entire board"""
+        # GIANT LIGHTNING BOLTS radiating outward
+        for angle in range(0, 360, 5):  # 72 lightning bolts
+            angle_rad = math.radians(angle)
+            
+            # Create multiple segments per bolt for smoother lightning
+            segments = 25
+            for segment in range(segments):
+                progress = segment / segments
+                distance = progress * 400  # Reach far across board
+                
+                # Lightning zigzag
+                zigzag = math.sin(progress * 20) * 20  # More zigzag
+                
+                x = self.center_x + math.cos(angle_rad) * distance
+                y = self.center_y + math.sin(angle_rad) * distance
+                
+                # Add zigzag perpendicular to main direction
+                perp_angle = angle_rad + math.pi / 2
+                x += math.cos(perp_angle) * zigzag
+                y += math.sin(perp_angle) * zigzag
+                
+                particle = {
+                    'x': x,
+                    'y': y,
+                    'life': random.uniform(0.5, 1.0),
+                    'max_life': random.uniform(0.5, 1.0),
+                    'color': random.choice([
+                        (255, 255, 255),  # Pure white
+                        (200, 200, 255),  # Electric blue
+                        (255, 255, 200),  # Electric yellow
+                        (180, 220, 255),  # Light blue
+                    ]),
+                    'size': random.randint(8, 15),  # Large lightning
+                    'type': 'lightning_bolt',
+                    'intensity': random.uniform(0.8, 1.0)
+                }
+                self.particles.append(particle)
+        
+        # MASSIVE ELECTRIC SPARKS filling the explosion area
+        for i in range(300):  # Many sparks
+            angle = random.uniform(0, 2 * math.pi)
+            distance = random.uniform(50, 350)
+            
+            x = self.center_x + math.cos(angle) * distance
+            y = self.center_y + math.sin(angle) * distance
+            
+            particle = {
+                'x': x,
+                'y': y,
+                'vx': random.uniform(-200, 200),
+                'vy': random.uniform(-200, 200),
+                'life': random.uniform(0.3, 0.8),
+                'max_life': random.uniform(0.3, 0.8),
+                'color': random.choice([
+                    (255, 255, 255),  # White
+                    (220, 240, 255),  # Light electric blue
+                    (255, 255, 180),  # Electric yellow
+                    (200, 255, 200),  # Electric green
+                    (255, 200, 255),  # Electric magenta
+                ]),
+                'size': random.randint(6, 12),
+                'type': 'electric_spark',
+                'intensity': random.uniform(0.7, 1.0)
+            }
+            self.particles.append(particle)
+        
+        # BRIGHT FLASH at center
+        for i in range(20):
+            particle = {
+                'x': self.center_x + random.uniform(-30, 30),
+                'y': self.center_y + random.uniform(-30, 30),
+                'vx': 0,
+                'vy': 0,
+                'life': random.uniform(0.3, 0.6),
+                'max_life': random.uniform(0.3, 0.6),
+                'color': (255, 255, 255),  # Pure white flash
+                'size': random.randint(20, 30),
+                'type': 'center_flash',
+                'intensity': 1.0
+            }
+            self.particles.append(particle)
+    
+    def update(self, dt: float):
+        """Update black hole lightning explosion"""
+        self.elapsed += dt
+        
+        for particle in self.particles[:]:
+            if particle['type'] == 'lightning_bolt':
+                # Lightning bolts just fade
+                particle['life'] -= dt
+                
+            elif particle['type'] == 'electric_spark':
+                # Sparks move and fade
+                particle['x'] += particle['vx'] * dt
+                particle['y'] += particle['vy'] * dt
+                particle['vx'] *= 0.95  # Slight slowdown
+                particle['vy'] *= 0.95
+                particle['life'] -= dt
+                
+            elif particle['type'] == 'center_flash':
+                # Flash particles just fade
+                particle['life'] -= dt
+            
+            if particle['life'] <= 0:
+                self.particles.remove(particle)
+    
+    def draw(self, screen: pygame.Surface):
+        """Draw black hole lightning explosion"""
+        for particle in self.particles:
+            if particle['life'] <= 0:
+                continue
+                
+            life_ratio = particle['life'] / particle['max_life']
+            alpha = int(255 * life_ratio * particle['intensity'])
+            
+            x, y = int(particle['x']), int(particle['y'])
+            size = max(1, int(particle['size'] * life_ratio))
+            color = particle['color']
+            
+            if particle['type'] == 'lightning_bolt':
+                self._draw_lightning_segment(screen, x, y, size, color, alpha)
+            elif particle['type'] == 'electric_spark':
+                self._draw_electric_spark(screen, x, y, size, color, alpha)
+            elif particle['type'] == 'center_flash':
+                self._draw_center_flash(screen, x, y, size, color, alpha)
+    
+    def _draw_lightning_segment(self, screen: pygame.Surface, x: int, y: int, size: int, color: Tuple[int, int, int], alpha: int):
+        """Draw lightning segment as bright thick line"""
+        pixel_size = max(3, size // 2)
+        pixel_x = (x // 2) * 2
+        pixel_y = (y // 2) * 2
+        
+        surf = pygame.Surface((pixel_size * 2, pixel_size * 2))
+        surf.fill(color)
+        surf.set_alpha(alpha)
+        screen.blit(surf, (pixel_x - pixel_size, pixel_y - pixel_size))
+    
+    def _draw_electric_spark(self, screen: pygame.Surface, x: int, y: int, size: int, color: Tuple[int, int, int], alpha: int):
+        """Draw electric spark as bright cross"""
+        pixel_size = max(2, size // 3)
+        pixel_x = (x // 2) * 2
+        pixel_y = (y // 2) * 2
+        
+        # Horizontal bar
+        h_surf = pygame.Surface((pixel_size * 3, pixel_size))
+        h_surf.fill(color)
+        h_surf.set_alpha(alpha)
+        screen.blit(h_surf, (pixel_x - (pixel_size * 3) // 2, pixel_y - pixel_size // 2))
+        
+        # Vertical bar
+        v_surf = pygame.Surface((pixel_size, pixel_size * 3))
+        v_surf.fill(color)
+        v_surf.set_alpha(alpha)
+        screen.blit(v_surf, (pixel_x - pixel_size // 2, pixel_y - (pixel_size * 3) // 2))
+    
+    def _draw_center_flash(self, screen: pygame.Surface, x: int, y: int, size: int, color: Tuple[int, int, int], alpha: int):
+        """Draw bright center flash"""
+        pixel_size = max(4, size // 3)
+        pixel_x = (x // 3) * 3
+        pixel_y = (y // 3) * 3
+        
+        surf = pygame.Surface((pixel_size * 3, pixel_size * 3))
+        surf.fill(color)
+        surf.set_alpha(alpha)
+        screen.blit(surf, (pixel_x - (pixel_size * 3) // 2, pixel_y - (pixel_size * 3) // 2))
+    
+    def is_finished(self) -> bool:
+        """Check if explosion is finished"""
+        return len(self.particles) == 0 and self.elapsed > 2.0
     
     def _draw_crackle_spark(self, screen: pygame.Surface, x: int, y: int, size: int, color: Tuple[int, int, int], alpha: int):
         """Draw crackle sparks as tiny bright pixelated dots"""

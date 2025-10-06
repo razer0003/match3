@@ -1586,6 +1586,35 @@ class Match3Game:
                 if self.board.get_tile(row, col) is None:
                     empty_positions.append(row)
             
+            if not empty_positions:
+                continue
+                
+            # Remove existing tiles from board that will be animated
+            existing_tiles = []
+            for row in range(self.board_height):
+                tile = self.board.get_tile(row, col)
+                if tile is not None:
+                    existing_tiles.append((row, tile))
+                    self.board.set_tile(row, col, None)  # Remove from board during animation
+            
+            # Create animations for existing tiles falling down
+            shift_amount = len(empty_positions)
+            for old_row, tile in existing_tiles:
+                new_row = old_row + shift_amount
+                if new_row < self.board_height:  # Make sure it stays on the board
+                    start_y = self.board_y + old_row * self.tile_size
+                    end_y = self.board_y + new_row * self.tile_size
+                    fall_distance = end_y - start_y
+                    fall_duration = 0.3 + (fall_distance / (self.board_height * self.tile_size)) * 0.8
+                    
+                    fall_anim = FallAnimation(start_y, end_y, fall_duration)
+                    fall_anim.col = col
+                    fall_anim.from_row = old_row
+                    fall_anim.to_row = new_row
+                    fall_anim.tile = tile
+                    fall_anim.is_new_tile = False
+                    self.fall_animations.append(fall_anim)
+            
             # Create animations for new tiles, stacking them properly above the board
             for i, row in enumerate(empty_positions):
                 # Create a new tile
@@ -1607,8 +1636,6 @@ class Match3Game:
                 fall_anim.tile = tile
                 fall_anim.is_new_tile = True
                 self.fall_animations.append(fall_anim)
-                
-                # DO NOT place tile on board - it exists only in animation until completion
 
     def create_new_tile_animations(self):
         """Create fall animations for newly spawned tiles"""
@@ -1643,6 +1670,9 @@ class Match3Game:
     
     def complete_fall_animation(self):
         """Complete falling animation and check for new matches"""
+        # Re-fill any empty spaces that still exist (fallback safety)
+        self.board.fill_empty_spaces()
+        
         # Check for new matches
         new_matches = self.board.find_all_matches()
         if new_matches:

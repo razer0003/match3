@@ -618,3 +618,23 @@ class Board:
             return create_special_tile(combo_type, color=color)
         
         return None
+    
+    def get_special_tile_position(self, match: 'Match') -> Optional[Tuple[int, int]]:
+        """Get the position where a special tile will be created for a match"""
+        from special_tiles import SpecialTileType
+        
+        # Determine what type of special tile this match would create
+        if match.match_type == MatchType.FOUR:
+            # 4-match creates rocket at center
+            return self.get_match_center(match.positions)
+        elif match.match_type == MatchType.FIVE:
+            # 5-match creates lightning at center  
+            return self.get_match_center(match.positions)
+        elif match.match_type in [MatchType.SQUARE, MatchType.CORNER]:
+            # Square/corner creates bomb at center
+            return self.get_match_center(match.positions)
+        elif match.match_type == MatchType.T_SHAPE:
+            # T-shape creates board wipe at center
+            return self.get_match_center(match.positions)
+        
+        return None  # No special tile for 3-matches

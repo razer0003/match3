@@ -169,3 +169,131 @@ class ParticleEffect:
     def is_finished(self) -> bool:
         """Check if all particles are finished"""
         return len(self.particles) == 0
+
+class PopAnimation(Animation):
+    """Animation for tiles popping/shrinking when matched"""
+    
+    def __init__(self, tile_positions: list, tile_data: list, center_pos: Optional[Tuple[float, float]] = None, duration: float = 0.15):
+        super().__init__(duration)
+        self.tile_positions = tile_positions  # List of (row, col, x, y) positions
+        self.tile_data = tile_data  # List of actual tile objects to draw during animation
+        self.center_pos = center_pos  # If None, shrink to nothing; if set, shrink to center
+        self.scales = [1.0] * len(tile_positions)  # Current scale for each tile
+        self.is_special = center_pos is not None
+    
+    def update(self, dt: float) -> bool:
+        completed = super().update(dt)
+        progress = self.get_progress()
+        
+        
+        if self.is_special:
+            # Special tile creation: shrink toward center position
+            for i in range(len(self.scales)):
+                # Fast shrink with slight bounce
+                self.scales[i] = max(0.0, 1.0 - (progress * 1.2))
+        else:
+            # Normal match: shrink to nothing with bounce
+            bounce_factor = 1.0 + (math.sin(progress * math.pi * 2) * 0.1)
+            for i in range(len(self.scales)):
+                self.scales[i] = max(0.0, (1.0 - progress) * bounce_factor)
+        
+        return completed
+    
+    def get_tile_scale(self, index: int) -> float:
+        """Get the current scale for a tile at given index"""
+        if index < len(self.scales):
+            return self.scales[index]
+        return 0.0
+
+class SpawnAnimation(Animation):
+    """Animation for special tiles spawning/growing from tiny to normal size"""
+    
+    def __init__(self, row: int, col: int, duration: float = 0.25):
+        super().__init__(duration)
+        self.row = row
+        self.col = col
+        self.scale = 0.0  # Start tiny
+    
+    def update(self, dt: float) -> bool:
+        completed = super().update(dt)
+        progress = self.get_progress()
+        
+        # Elastic easing out for a satisfying "pop in" effect
+        if progress < 1.0:
+            # Elastic ease-out formula
+            c4 = (2 * math.pi) / 3
+            self.scale = math.pow(2, -10 * progress) * math.sin((progress * 10 - 0.75) * c4) + 1
+            self.scale = max(0.0, min(1.2, self.scale))  # Clamp and allow slight overshoot
+        else:
+            self.scale = 1.0  # Final size
+        
+        return completed
+    
+    def get_scale(self) -> float:
+        """Get the current scale for the spawning tile"""
+        return self.scale
+
+class PopParticle:
+    """Simple pop particle effect"""
+    
+    def __init__(self, x: float, y: float, color: Tuple[int, int, int], is_special: bool = False):
+        self.x = x
+        self.y = y
+        self.color = color if not is_special else (255, 255, 255)  # White for special
+        self.life = 0.3  # Short duration
+        self.max_life = 0.3
+        self.size = 8 if not is_special else 12
+        self.max_size = self.size
+        self.particles = []
+        
+        # Create small particle burst
+        particle_count = 6 if not is_special else 10
+        for _ in range(particle_count):
+            angle = random.uniform(0, 2 * math.pi)
+            speed = random.uniform(30, 80)
+            self.particles.append({
+                'x': x,
+                'y': y,
+                'vx': math.cos(angle) * speed,
+                'vy': math.sin(angle) * speed,
+                'life': random.uniform(0.2, 0.4),
+                'max_life': random.uniform(0.2, 0.4),
+                'size': random.uniform(2, 4)
+            })
+    
+    def update(self, dt: float):
+        """Update particle effect"""
+        self.life -= dt
+        
+        for particle in self.particles[:]:
+            particle['x'] += particle['vx'] * dt
+            particle['y'] += particle['vy'] * dt
+            particle['vx'] *= 0.95  # Friction
+            particle['vy'] *= 0.95
+            particle['life'] -= dt
+            
+            if particle['life'] <= 0:
+                self.particles.remove(particle)
+    
+    def draw(self, screen: pygame.Surface):
+        """Draw particle effect"""
+        if self.life <= 0:
+            return
+            
+        for particle in self.particles:
+            if particle['life'] <= 0:
+                continue
+                
+            alpha = int(255 * (particle['life'] / particle['max_life']))
+            size = max(1, int(particle['size'] * (particle['life'] / particle['max_life'])))
+            
+            # Create surface with alpha
+            particle_surface = pygame.Surface((size * 2, size * 2), pygame.SRCALPHA)
+            pygame.draw.circle(particle_surface, self.color, (size, size), size)
+            particle_surface.set_alpha(alpha)
+            
+            screen.blit(particle_surface, (particle['x'] - size, particle['y'] - size))
+    
+    def is_finished(self) -> bool:
+        """Check if particle effect is done"""
+        return self.life <= 0 and len(self.particles) == 0

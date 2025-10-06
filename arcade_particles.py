@@ -268,15 +268,25 @@ class PixelParticleSystem:
         self.effects.append(effect)
     
     def update(self, dt: float):
-        """Update all effects"""
-        for effect in self.effects[:]:
+        """Update all effects with optimized cleanup"""
+        # Update effects and collect finished ones for removal
+        finished_effects = []
+        for effect in self.effects:
             effect.update(dt)
             if effect.is_finished():
-                self.effects.remove(effect)
+                finished_effects.append(effect)
+        
+        # Remove finished effects in batch (more efficient)
+        for finished in finished_effects:
+            self.effects.remove(finished)
     
     def draw(self, screen: pygame.Surface):
-        """Draw all effects"""
-        for effect in self.effects:
+        """Draw all effects with performance budgeting"""
+        # Performance: Limit particle drawing time per frame
+        max_effects_per_frame = 15  # Limit effects drawn per frame
+        effects_to_draw = self.effects[:max_effects_per_frame]
+        
+        for effect in effects_to_draw:
             effect.draw(screen)
     
     def create_diagonal_lightning(self, start_x: float, start_y: float, end_x: float, end_y: float, color: Tuple[int, int, int], thickness: int):

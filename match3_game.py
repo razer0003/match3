@@ -2,10 +2,11 @@ import pygame
 import random
 import sys
 import os
+import time
 from typing import List, Tuple, Optional, Set
 import math
 from board import Board, Tile, TileColor, Match, MatchType
-from animations import FallAnimation, SwapAnimation, PulseAnimation, ParticleEffect
+from animations import FallAnimation, SwapAnimation, PulseAnimation, ParticleEffect, PopAnimation, PopParticle, SpawnAnimation
 from special_tiles import SpecialTile, SpecialTileType
 from arcade_particles import PixelParticleSystem
 from levels import get_level_config, LevelConfig
@@ -145,6 +146,8 @@ class Match3Game:
         self.clock = pygame.time.Clock()
         self.running = True
         
+        # Performance debugging removed
+        
         # Game state
         self.selected_tile = None
         self.animating = False
@@ -162,11 +165,19 @@ class Match3Game:
         self.pulse_animations = []
         self.particle_effects = []
         self.pixel_particles = PixelParticleSystem()
+        self.pop_animations = []
+        self.pop_particles = []
+        self.spawn_animations = []
+        self.pending_matches = None
         
         # Boss board animation systems
         self.boss_fall_animations = []
         self.boss_swap_animations = []
+        self.boss_pop_animations = []
+        self.boss_pop_particles = []
+        self.boss_spawn_animations = []
         self.boss_animating = False
+        self.pending_boss_matches = None
         self.boss_move_delay = 0.0  # Delay between boss moves
         self.boss_move_cooldown = 2.0  # 2 seconds between moves
         
@@ -224,6 +235,15 @@ class Match3Game:
         self.level_config = get_level_config(level)
         self.configure_level()
         
+# Performance debugging methods removed
+    
+    def configure_level(self):
+        """Configure game settings based on current level"""
+        # Configure level-specific parameters
+        self.tile_size = self.level_config.tile_size
+        self.board_width = self.level_config.width
+        self.board_height = self.level_config.height
+        
         # Initialize board and sprite manager
         self.board = Board(self.board_width, self.board_height, self.tile_size)
         self.sprite_manager = SpriteManager()
@@ -257,7 +277,7 @@ class Match3Game:
             self.boss_board_y = (WINDOW_HEIGHT - total_board_height) // 2
             
             # Initialize AI for boss board
-            ai_config = AIConfig(AIDifficulty.MEDIUM)  # Default to medium difficulty
+            ai_config = AIConfig(AIDifficulty.NIGHTMARE)  # Maximum difficulty!
             self.boss_ai = Match3AI(ai_config)
             self.boss_ai.set_board(self.boss_board)
         else:
@@ -272,15 +292,10 @@ class Match3Game:
         self.font = pygame.font.Font(None, 36)
         self.big_font = pygame.font.Font(None, 72)
     
-    def configure_level(self):
-        """Configure level-specific parameters"""
-        self.tile_size = self.level_config.tile_size
-        self.board_width = self.level_config.width
-        self.board_height = self.level_config.height
-    
     def run(self):
         """Main game loop"""
         while self.running:
+            frame_start = time.time()
             dt = self.clock.tick(FPS) / 1000.0  # Delta time in seconds
             
             self.handle_events()
@@ -1336,22 +1351,195 @@ class Match3Game:
     
     def process_matches(self, matches):
         """Process all matches found on the board"""
+        # Create pop animations for matched tiles (but don't clear tiles yet)
+        self.create_pop_animations_for_matches(matches)
+        
         # Add score and create particle effects
         for match in matches:
             # Calculate score with combo multiplier
             match_score = match.score * self.combo_multiplier
             self.score += match_score
-            
-            # Skip basic particle effects for normal tiles - only use pixel particles for special tiles
-            
-            # Clear the match
-            self.board.clear_matches(match)
+        
+        # Store matches to clear after animation completes
+        self.pending_matches = matches
         
         # Increase combo multiplier
         self.combo_multiplier += 1
         
-        # Start falling animation
-        self.start_fall_animation()
+        # Don't start falling until pop animations finish
+    
+    def create_pop_animations_for_matches(self, matches):
+        """Create pop animations for matched tiles"""
+        for match in matches:
+            # Get tile positions and data for animation
+            tile_positions = []
+            tile_data = []
+            match_color = None
+            
+            for row, col in match.positions:
+                tile = self.board.get_tile(row, col)
+                if tile and tile.color != TileColor.EMPTY:
+                    x = self.board_x + col * self.tile_size
+                    y = self.board_y + row * self.tile_size
+                    tile_positions.append((row, col, x, y))
+                    tile_data.append(tile.copy() if hasattr(tile, 'copy') else tile)  # Store copy of tile
+                    if match_color is None:
+                        match_color = tile.color
+            
+            if not tile_positions:
+                continue
+            
+            # Check if this match will create a special tile
+            special_tile_pos = self.board.get_special_tile_position(match)
+            center_pos = None
+            is_special = False
+            
+            if special_tile_pos:
+                is_special = True
+                center_row, center_col = special_tile_pos
+                center_x = self.board_x + center_col * self.tile_size + self.tile_size // 2
+                center_y = self.board_y + center_row * self.tile_size + self.tile_size // 2
+                center_pos = (center_x, center_y)
+            
+            # Create pop animation with tile data
+            pop_anim = PopAnimation(tile_positions, tile_data, center_pos)
+            self.pop_animations.append(pop_anim)
+            
+            # Create pop particle at center of match
+            if tile_positions:
+                if is_special and center_pos:
+                    # Special match: white particle at center position
+                    pop_particle = PopParticle(center_pos[0], center_pos[1], (255, 255, 255), True)
+                else:
+                    # Normal match: colored particle at match center
+                    avg_x = sum(pos[2] for pos in tile_positions) / len(tile_positions) + self.tile_size // 2
+                    avg_y = sum(pos[3] for pos in tile_positions) / len(tile_positions) + self.tile_size // 2
+                    
+                    # Get color from tile color
+                    color = self.get_color_from_tile_color(match_color)
+                    pop_particle = PopParticle(avg_x, avg_y, color, False)
+                
+                self.pop_particles.append(pop_particle)
+    
+    def get_color_from_tile_color(self, tile_color):
+        """Convert TileColor enum to RGB tuple"""
+        color_map = {
+            TileColor.RED: (255, 100, 100),
+            TileColor.GREEN: (100, 255, 100),
+            TileColor.BLUE: (100, 100, 255),
+            TileColor.YELLOW: (255, 255, 100),
+            TileColor.ORANGE: (255, 165, 0)
+        }
+        return color_map.get(tile_color, (255, 255, 255))
+    
+    def get_pop_animation_scale(self, row, col):
+        """Get the current scale for a tile due to pop animation"""
+        for pop_anim in self.pop_animations:
+            for i, (tile_row, tile_col, _, _) in enumerate(pop_anim.tile_positions):
+                if tile_row == row and tile_col == col:
+                    return pop_anim.get_tile_scale(i)
+        return 1.0  # No animation, full scale
+    
+    def get_pop_animation_tile(self, row, col):
+        """Get the tile data from pop animation if this tile is animating"""
+        for pop_anim in self.pop_animations:
+            for i, (tile_row, tile_col, _, _) in enumerate(pop_anim.tile_positions):
+                if tile_row == row and tile_col == col:
+                    return pop_anim.tile_data[i]
+        return None
+    
+    def get_spawn_animation_scale(self, row, col):
+        """Get the current scale for a tile due to spawn animation"""
+        for spawn_anim in self.spawn_animations:
+            if spawn_anim.row == row and spawn_anim.col == col:
+                return spawn_anim.get_scale()
+        return 1.0  # No animation, full scale
+    
+    def create_spawn_animation(self, row, col):
+        """Create a spawn animation for a special tile"""
+        spawn_anim = SpawnAnimation(row, col)
+        self.spawn_animations.append(spawn_anim)
+    
+    def create_boss_pop_animations_for_matches(self, matches):
+        """Create pop animations for boss board matched tiles"""
+        for match in matches:
+            # Get tile positions and data for animation
+            tile_positions = []
+            tile_data = []
+            match_color = None
+            
+            for row, col in match.positions:
+                tile = self.boss_board.get_tile(row, col)
+                if tile and tile.color != TileColor.EMPTY:
+                    x = self.boss_board_x + col * self.tile_size
+                    y = self.boss_board_y + row * self.tile_size
+                    tile_positions.append((row, col, x, y))
+                    tile_data.append(tile.copy() if hasattr(tile, 'copy') else tile)  # Store copy of tile
+                    if match_color is None:
+                        match_color = tile.color
+            
+            if not tile_positions:
+                continue
+            
+            # Check if this match will create a special tile
+            special_tile_pos = self.boss_board.get_special_tile_position(match)
+            center_pos = None
+            is_special = False
+            
+            if special_tile_pos:
+                is_special = True
+                center_row, center_col = special_tile_pos
+                center_x = self.boss_board_x + center_col * self.tile_size + self.tile_size // 2
+                center_y = self.boss_board_y + center_row * self.tile_size + self.tile_size // 2
+                center_pos = (center_x, center_y)
+            
+            # Create pop animation with tile data
+            pop_anim = PopAnimation(tile_positions, tile_data, center_pos)
+            self.boss_pop_animations.append(pop_anim)
+            
+            # Create pop particle at center of match
+            if tile_positions:
+                if is_special and center_pos:
+                    # Special match: white particle at center position
+                    pop_particle = PopParticle(center_pos[0], center_pos[1], (255, 255, 255), True)
+                else:
+                    # Normal match: colored particle at match center
+                    avg_x = sum(pos[2] for pos in tile_positions) / len(tile_positions) + self.tile_size // 2
+                    avg_y = sum(pos[3] for pos in tile_positions) / len(tile_positions) + self.tile_size // 2
+                    
+                    # Get color from tile color
+                    color = self.get_color_from_tile_color(match_color)
+                    pop_particle = PopParticle(avg_x, avg_y, color, False)
+                
+                self.boss_pop_particles.append(pop_particle)
+    
+    def get_boss_pop_animation_scale(self, row, col):
+        """Get the current scale for a boss tile due to pop animation"""
+        for pop_anim in self.boss_pop_animations:
+            for i, (tile_row, tile_col, _, _) in enumerate(pop_anim.tile_positions):
+                if tile_row == row and tile_col == col:
+                    return pop_anim.get_tile_scale(i)
+        return 1.0  # No animation, full scale
+    
+    def get_boss_pop_animation_tile(self, row, col):
+        """Get the tile data from boss pop animation if this tile is animating"""
+        for pop_anim in self.boss_pop_animations:
+            for i, (tile_row, tile_col, _, _) in enumerate(pop_anim.tile_positions):
+                if tile_row == row and tile_col == col:
+                    return pop_anim.tile_data[i]
+        return None
+    
+    def get_boss_spawn_animation_scale(self, row, col):
+        """Get the current scale for a boss tile due to spawn animation"""
+        for spawn_anim in self.boss_spawn_animations:
+            if spawn_anim.row == row and spawn_anim.col == col:
+                return spawn_anim.get_scale()
+        return 1.0  # No animation, full scale
+    
+    def create_boss_spawn_animation(self, row, col):
+        """Create a spawn animation for a boss special tile"""
+        spawn_anim = SpawnAnimation(row, col)
+        self.boss_spawn_animations.append(spawn_anim)
     
     def start_fall_animation(self):
         """Start falling animation for tiles after matches are cleared"""
@@ -1373,6 +1561,7 @@ class Match3Game:
                     
                     fall_anim = FallAnimation(start_y, end_y, duration)
                     fall_anim.col = col
+                    fall_anim.from_row = tile_data['from_row']
                     fall_anim.to_row = tile_data['to_row']
                     fall_anim.tile = tile_data['tile']
                     fall_anim.is_existing_tile = True
@@ -1649,6 +1838,78 @@ class Match3Game:
             if effect.is_finished():
                 self.particle_effects.remove(effect)
         
+        # Update pop animations
+        for pop_anim in self.pop_animations[:]:
+            if pop_anim.update(dt):
+                self.pop_animations.remove(pop_anim)
+        
+        # If all pop animations are done and we have pending matches, clear them and start falling
+        if not self.pop_animations and hasattr(self, 'pending_matches') and self.pending_matches:
+            # Check for special tiles that will be created and trigger spawn animations
+            special_tile_positions = []
+            for match in self.pending_matches:
+                special_tile_pos = self.board.get_special_tile_position(match)
+                if special_tile_pos:
+                    special_tile_positions.append(special_tile_pos)
+            
+            # Clear matches (which creates special tiles)
+            for match in self.pending_matches:
+                self.board.clear_matches(match)
+            
+            # Create spawn animations for special tiles
+            for row, col in special_tile_positions:
+                self.create_spawn_animation(row, col)
+            
+            self.pending_matches = None
+            self.start_fall_animation()
+        
+        # Update pop particles
+        for pop_particle in self.pop_particles[:]:
+            pop_particle.update(dt)
+            if pop_particle.is_finished():
+                self.pop_particles.remove(pop_particle)
+        
+        # Update spawn animations
+        for spawn_anim in self.spawn_animations[:]:
+            if spawn_anim.update(dt):
+                self.spawn_animations.remove(spawn_anim)
+        
+        # Update boss pop animations
+        for pop_anim in self.boss_pop_animations[:]:
+            if pop_anim.update(dt):
+                self.boss_pop_animations.remove(pop_anim)
+        
+        # If all boss pop animations are done and we have pending matches, clear them and apply gravity
+        if not self.boss_pop_animations and hasattr(self, 'pending_boss_matches') and self.pending_boss_matches:
+            # Check for special tiles that will be created and trigger spawn animations
+            special_tile_positions = []
+            for match in self.pending_boss_matches:
+                special_tile_pos = self.boss_board.get_special_tile_position(match)
+                if special_tile_pos:
+                    special_tile_positions.append(special_tile_pos)
+            
+            # Clear matches (which creates special tiles)
+            for match in self.pending_boss_matches:
+                self.boss_board.clear_matches(match)
+            
+            # Create spawn animations for special tiles
+            for row, col in special_tile_positions:
+                self.create_boss_spawn_animation(row, col)
+            
+            self.pending_boss_matches = None
+            self.apply_boss_board_gravity()
+        
+        # Update boss pop particles
+        for pop_particle in self.boss_pop_particles[:]:
+            pop_particle.update(dt)
+            if pop_particle.is_finished():
+                self.boss_pop_particles.remove(pop_particle)
+        
+        # Update boss spawn animations
+        for spawn_anim in self.boss_spawn_animations[:]:
+            if spawn_anim.update(dt):
+                self.boss_spawn_animations.remove(spawn_anim)
+        
         # Update pixel particle system
         self.pixel_particles.update(dt)
         
@@ -1882,25 +2143,52 @@ class Match3Game:
             if fall_anim.col == col:
                 if max_row is None:
                     return True
-                # Check if the falling tile will affect this row
-                # If a tile is falling to a position at or below this row, this position is affected
-                if fall_anim.to_row >= max_row:
-                    return True
+                # Check if there's a tile that originally came from this position OR is falling to this position
+                # This handles both existing tiles moving and new tiles falling
+                if hasattr(fall_anim, 'from_row'):
+                    # Existing tile moving from one position to another
+                    if fall_anim.from_row == max_row or fall_anim.to_row == max_row:
+                        return True
+                else:
+                    # New tile falling to a position (no from_row)
+                    if fall_anim.to_row == max_row:
+                        return True
         return False
     
     def draw_tile_at_position(self, tile_row, tile_col, draw_row, draw_col):
         """Draw a tile at a specific board position"""
+        # Check for pop animation scaling
+        scale = self.get_pop_animation_scale(tile_row, tile_col)
+        
+        # Also check for spawn animation scaling (spawn takes priority if both exist)
+        spawn_scale = self.get_spawn_animation_scale(tile_row, tile_col)
+        if spawn_scale != 1.0:
+            scale = spawn_scale
+        
         # Calculate tile position with spacing
         spacing = 2  # Small gap between tiles
-        x = self.board_x + draw_col * self.tile_size + spacing
-        y = self.board_y + draw_row * self.tile_size + spacing
+        base_x = self.board_x + draw_col * self.tile_size + spacing
+        base_y = self.board_y + draw_row * self.tile_size + spacing
         
-        # Draw tile background with smaller size for spacing
+        # Apply scaling for pop animation
         tile_size_with_spacing = self.tile_size - (spacing * 2)
-        tile_rect = pygame.Rect(x, y, tile_size_with_spacing, tile_size_with_spacing)
+        scaled_size = int(tile_size_with_spacing * scale)
         
-        # Get tile color
-        tile = self.board.get_tile(tile_row, tile_col)
+        # Center the scaled tile
+        offset = (tile_size_with_spacing - scaled_size) // 2
+        x = base_x + offset
+        y = base_y + offset
+        
+        # Skip drawing if tile is too small (popped)
+        if scaled_size < 2:
+            return
+            
+        tile_rect = pygame.Rect(x, y, scaled_size, scaled_size)
+        
+        # Get tile color - check if it's animating first
+        tile = self.get_pop_animation_tile(tile_row, tile_col)
+        if tile is None:
+            tile = self.board.get_tile(tile_row, tile_col)
         if tile:
             # Check if it's a special tile
             if tile.is_special():
@@ -1909,7 +2197,7 @@ class Match3Game:
                 # Try to use special tile sprite first, fallback to text rendering
                 sprite_type = visual_data.get('sprite_type')
                 if sprite_type and self.sprite_manager.has_special_sprite(sprite_type):
-                    sprite = self.sprite_manager.get_special_sprite(sprite_type, tile_size_with_spacing)
+                    sprite = self.sprite_manager.get_special_sprite(sprite_type, scaled_size)
                     self.screen.blit(sprite, (x, y))
                     # No border for sprites - they should be self-contained
                 else:
@@ -1922,23 +2210,24 @@ class Match3Game:
                     symbol_color = visual_data.get('color', (255, 255, 255))
                     
                     # Create font for symbol - make it bigger and bolder
-                    font_size = max(tile_size_with_spacing // 2, 24)  # Bigger font
+                    font_size = max(scaled_size // 2, 12)  # Bigger font, scaled
                     font = pygame.font.Font(None, font_size)
                     symbol_surface = font.render(symbol, True, symbol_color)
                     
                     # Center the symbol
-                    symbol_rect = symbol_surface.get_rect(center=(x + tile_size_with_spacing // 2, y + tile_size_with_spacing // 2))
+                    symbol_rect = symbol_surface.get_rect(center=(x + scaled_size // 2, y + scaled_size // 2))
                     self.screen.blit(symbol_surface, symbol_rect)
                     
                     # Add a glowing border for text-based special tiles only
                     pygame.draw.rect(self.screen, visual_data.get('effect_color', (255, 255, 255)), tile_rect, 3)
             else:
                 # Regular tile - try to use sprite first, fallback to color
-                sprite = self.sprite_manager.get_tile_sprite(tile.color, tile_size_with_spacing)
+                sprite = self.sprite_manager.get_tile_sprite(tile.color, scaled_size)
                 if sprite:
-                    # Sprite is 5 pixels bigger than tile, so center it by offsetting by -2
-                    sprite_x = x - 2
-                    sprite_y = y - 2
+                    # Sprite is 5 pixels bigger than tile, so center it by offsetting by -2 (scaled)
+                    sprite_offset = int(-2 * scale)
+                    sprite_x = x + sprite_offset
+                    sprite_y = y + sprite_offset
                     self.screen.blit(sprite, (sprite_x, sprite_y))
                 else:
                     # Fallback to colored rectangle
@@ -2160,21 +2449,41 @@ class Match3Game:
     
     def draw_boss_tile_at_position(self, row, col, tile):
         """Draw a single tile on the boss board"""
-        x = self.boss_board_x + col * self.tile_size + self.tile_size // 2
-        y = self.boss_board_y + row * self.tile_size + self.tile_size // 2
+        # Check for pop animation scaling
+        scale = self.get_boss_pop_animation_scale(row, col)
+        
+        # Also check for spawn animation scaling (spawn takes priority if both exist)
+        spawn_scale = self.get_boss_spawn_animation_scale(row, col)
+        if spawn_scale != 1.0:
+            scale = spawn_scale
+        
+        # Get tile data - check if it's animating first
+        animation_tile = self.get_boss_pop_animation_tile(row, col)
+        if animation_tile is not None:
+            tile = animation_tile
+        
+        # Skip drawing if tile is too small (popped)
+        if scale < 0.1:
+            return
+            
+        base_x = self.boss_board_x + col * self.tile_size + self.tile_size // 2
+        base_y = self.boss_board_y + row * self.tile_size + self.tile_size // 2
+        
+        # Apply scaling
+        scaled_size = int(self.tile_size * scale)
         
         # Get sprite for the tile
         if tile.special_tile:
-            sprite = self.sprite_manager.get_special_sprite(tile.special_tile.get_visual_representation().get('sprite_type', 'lightning'), self.tile_size)
+            sprite = self.sprite_manager.get_special_sprite(tile.special_tile.get_visual_representation().get('sprite_type', 'lightning'), scaled_size)
         else:
-            sprite = self.sprite_manager.get_tile_sprite(tile.color, self.tile_size)
+            sprite = self.sprite_manager.get_tile_sprite(tile.color, scaled_size)
         
         if sprite:
-            sprite_rect = sprite.get_rect(center=(x, y))
+            sprite_rect = sprite.get_rect(center=(base_x, base_y))
             self.screen.blit(sprite, sprite_rect)
         else:
             # Fallback to colored rectangle
-            tile_rect = pygame.Rect(x - self.tile_size // 2, y - self.tile_size // 2, self.tile_size, self.tile_size)
+            tile_rect = pygame.Rect(base_x - scaled_size // 2, base_y - scaled_size // 2, scaled_size, scaled_size)
             pygame.draw.rect(self.screen, tile.color.value, tile_rect)
     
     def is_boss_tile_animating(self, row, col):
@@ -2277,6 +2586,14 @@ class Match3Game:
         # Draw particle effects
         for effect in self.particle_effects:
             effect.draw(self.screen)
+        
+        # Draw pop particles
+        for pop_particle in self.pop_particles:
+            pop_particle.draw(self.screen)
+        
+        # Draw boss pop particles
+        for pop_particle in self.boss_pop_particles:
+            pop_particle.draw(self.screen)
         
         # Draw instructions
         if self.selected_tile is None:
@@ -2522,12 +2839,13 @@ class Match3Game:
     
     def process_boss_matches(self, matches):
         """Process matches on the boss board and update AI score"""
-        # Process matches using the same logic as player board (creates special tiles)
-        for match in matches:
-            self.boss_board.clear_matches(match)
+        # Create pop animations for boss matched tiles (but don't clear tiles yet)
+        self.create_boss_pop_animations_for_matches(matches)
         
-        # Apply gravity to boss board with animations
-        self.apply_boss_board_gravity()
+        # Store matches to clear after animation completes
+        self.pending_boss_matches = matches
+        
+        # Don't apply gravity until pop animations finish
         
         # Note: Cascades will be checked when fall animations complete
     

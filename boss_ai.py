@@ -469,9 +469,15 @@ class Match3AI:
         for move in possible_moves:
             self.evaluator.evaluate_move(self.current_board, move)
         
-        # Apply lookahead if configured
+        # Apply simple heuristic boost instead of expensive lookahead
         if self.config.thinking_depth > 1:
-            possible_moves = self.apply_lookahead(possible_moves)
+            for move in possible_moves:
+                # Simple heuristic bonuses
+                if move.special_tiles_created:
+                    move.score += len(move.special_tiles_created) * 30
+                total_match_size = sum(len(match.positions) for match in move.immediate_matches)
+                if total_match_size >= 4:
+                    move.score += (total_match_size - 3) * 20
         
         # Sort by score and apply mistake chance
         possible_moves.sort(key=lambda m: m.score, reverse=True)
@@ -565,19 +571,19 @@ class Match3AI:
             return False
             
         elif self.computation_state == "lookahead":
-            # Apply lookahead to top moves only, spread across frames
-            top_moves = min(5, len(self.possible_moves))  # Only lookahead on top 5 moves
-            moves_per_frame = 1  # 1 lookahead per frame since it's expensive
+            # Skip expensive lookahead computation for now to maintain performance
+            # Simple heuristic: boost moves that create special tiles or clear more tiles
+            for move in self.possible_moves[:min(10, len(self.possible_moves))]:
+                # Bonus for creating special tiles
+                if move.special_tiles_created:
+                    move.score += len(move.special_tiles_created) * 50
+                # Bonus for large matches
+                total_match_size = sum(len(match.positions) for match in move.immediate_matches)
+                if total_match_size >= 4:
+                    move.score += (total_match_size - 3) * 25
             
-            if self.current_move_index < top_moves:
-                move = self.possible_moves[self.current_move_index]
-                lookahead_score = self.calculate_lookahead_score(move, self.config.thinking_depth - 1)
-                move.score += lookahead_score * 0.3
-                self.current_move_index += 1
-                return False
-            else:
-                self.computation_state = "finalizing"
-                return False
+            self.computation_state = "finalizing"
+            return False
                 
         elif self.computation_state == "finalizing":
             # Finalize the best move selection

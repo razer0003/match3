@@ -1553,11 +1553,9 @@ class Match3Game:
                 end_y = self.board_y + tile_data['to_row'] * self.tile_size
                 
                 if start_y != end_y:
-                    # Calculate duration based on fall distance for more natural feel
+                    # Calculate duration - use same formula as new tiles for consistency
                     fall_distance = end_y - start_y
-                    base_duration = 0.3
-                    distance_factor = fall_distance / (self.tile_size * 3)  # Normalize by 3 tile heights
-                    duration = base_duration + distance_factor * 0.3
+                    duration = 0.3 + (fall_distance / (self.board_height * self.tile_size)) * 0.8
                     
                     fall_anim = FallAnimation(start_y, end_y, duration)
                     fall_anim.col = col
@@ -1586,34 +1584,9 @@ class Match3Game:
                 if self.board.get_tile(row, col) is None:
                     empty_positions.append(row)
             
+            # Skip this column if there are no empty positions  
             if not empty_positions:
                 continue
-                
-            # Remove existing tiles from board that will be animated
-            existing_tiles = []
-            for row in range(self.board_height):
-                tile = self.board.get_tile(row, col)
-                if tile is not None:
-                    existing_tiles.append((row, tile))
-                    self.board.set_tile(row, col, None)  # Remove from board during animation
-            
-            # Create animations for existing tiles falling down
-            shift_amount = len(empty_positions)
-            for old_row, tile in existing_tiles:
-                new_row = old_row + shift_amount
-                if new_row < self.board_height:  # Make sure it stays on the board
-                    start_y = self.board_y + old_row * self.tile_size
-                    end_y = self.board_y + new_row * self.tile_size
-                    fall_distance = end_y - start_y
-                    fall_duration = 0.3 + (fall_distance / (self.board_height * self.tile_size)) * 0.8
-                    
-                    fall_anim = FallAnimation(start_y, end_y, fall_duration)
-                    fall_anim.col = col
-                    fall_anim.from_row = old_row
-                    fall_anim.to_row = new_row
-                    fall_anim.tile = tile
-                    fall_anim.is_new_tile = False
-                    self.fall_animations.append(fall_anim)
             
             # Create animations for new tiles, stacking them properly above the board
             for i, row in enumerate(empty_positions):
@@ -1636,6 +1609,8 @@ class Match3Game:
                 fall_anim.tile = tile
                 fall_anim.is_new_tile = True
                 self.fall_animations.append(fall_anim)
+                
+                # DO NOT place tile on board - it exists only in animation until completion
 
     def create_new_tile_animations(self):
         """Create fall animations for newly spawned tiles"""
@@ -1670,9 +1645,6 @@ class Match3Game:
     
     def complete_fall_animation(self):
         """Complete falling animation and check for new matches"""
-        # Re-fill any empty spaces that still exist (fallback safety)
-        self.board.fill_empty_spaces()
-        
         # Check for new matches
         new_matches = self.board.find_all_matches()
         if new_matches:
@@ -1871,30 +1843,24 @@ class Match3Game:
         # Update fall animations (skip during rocket lightning and black hole)
         if not self.rocket_lightning_active and not self.black_hole_active:
             completed_fall_animations = []
+            # First pass: update animations and mark completed ones
+            completed_new_tiles = []  # Store new tiles to place after removal
+            
             for fall_anim in self.fall_animations[:]:
                 if fall_anim.update(dt):
-                    # For new tiles, only place on board when removing animation
-                    # For existing tiles, place immediately but add delay before removal  
-                    if hasattr(fall_anim, 'is_new_tile') and fall_anim.is_new_tile:
-                        # New tiles - place on board and remove immediately
-                        if hasattr(fall_anim, 'tile') and hasattr(fall_anim, 'to_row') and hasattr(fall_anim, 'col'):
-                            self.board.set_tile(fall_anim.to_row, fall_anim.col, fall_anim.tile)
+                    # ALL tiles (new and existing) - place on board immediately but delay removal
+                    if hasattr(fall_anim, 'tile') and hasattr(fall_anim, 'to_row') and hasattr(fall_anim, 'col'):
+                        self.board.set_tile(fall_anim.to_row, fall_anim.col, fall_anim.tile)
+                    
+                    # Add delay before removal for ALL tiles
+                    if not hasattr(fall_anim, 'completion_delay'):
+                        fall_anim.completion_delay = 0.05  # 50ms delay
+                        fall_anim.delay_elapsed = 0.0
+                    
+                    fall_anim.delay_elapsed += dt
+                    if fall_anim.delay_elapsed >= fall_anim.completion_delay:
                         completed_fall_animations.append(fall_anim)
                         self.fall_animations.remove(fall_anim)
-                    else:
-                        # Existing tiles - place on board immediately but delay removal
-                        if hasattr(fall_anim, 'tile') and hasattr(fall_anim, 'to_row') and hasattr(fall_anim, 'col'):
-                            self.board.set_tile(fall_anim.to_row, fall_anim.col, fall_anim.tile)
-                        
-                        # Add delay before removal
-                        if not hasattr(fall_anim, 'completion_delay'):
-                            fall_anim.completion_delay = 0.05  # 50ms delay
-                            fall_anim.delay_elapsed = 0.0
-                        
-                        fall_anim.delay_elapsed += dt
-                        if fall_anim.delay_elapsed >= fall_anim.completion_delay:
-                            completed_fall_animations.append(fall_anim)
-                            self.fall_animations.remove(fall_anim)
             
             # Check if all fall animations are complete and we need to check for new matches  
             if completed_fall_animations and not self.fall_animations:

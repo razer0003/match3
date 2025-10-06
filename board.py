@@ -73,10 +73,11 @@ class Match:
 class Board:
     """Manages the game board and tile operations"""
     
-    def __init__(self, width: int, height: int, tile_size: int):
+    def __init__(self, width: int, height: int, tile_size: int, buffer_zone_height: int = 0):
         self.width = width
         self.height = height
         self.tile_size = tile_size
+        self.buffer_zone_height = buffer_zone_height  # Number of invisible rows at top
         self.grid: List[List[Optional[Tile]]] = []
         self.available_colors = [TileColor.RED, TileColor.GREEN, TileColor.BLUE, 
                                TileColor.YELLOW, TileColor.ORANGE]
@@ -510,10 +511,20 @@ class Board:
         # Get positions affected by the special tile
         affected_positions = tile.special_tile.get_affected_positions(self, (row, col))
         
+        # Filter out buffer zone positions - special tiles cannot affect invisible tiles
+        visible_affected_positions = []
+        for pos_row, pos_col in affected_positions:
+            if (0 <= pos_row < self.height and 0 <= pos_col < self.width and 
+                pos_row >= self.buffer_zone_height):  # Only affect visible tiles
+                visible_affected_positions.append((pos_row, pos_col))
+        
+        # Use filtered positions for the rest of the method
+        affected_positions = visible_affected_positions
+        
         # First, collect special tiles that will be chain-detonated (before clearing)
         chain_reactions = []
         for pos_row, pos_col in affected_positions:
-            if 0 <= pos_row < self.height and 0 <= pos_col < self.width:
+            # No need for bounds check here since we already filtered
                 # Check if there are other special tiles in the affected area
                 affected_tile = self.get_tile(pos_row, pos_col)
                 if affected_tile and affected_tile.is_special() and (pos_row, pos_col) != (row, col):
@@ -525,11 +536,10 @@ class Board:
         
         # Clear all affected positions (except special tiles that will chain)
         for pos_row, pos_col in affected_positions:
-            if 0 <= pos_row < self.height and 0 <= pos_col < self.width:
-                # Don't clear special tiles yet - they need to detonate first
-                affected_tile = self.get_tile(pos_row, pos_col)
-                if not (affected_tile and affected_tile.is_special()):
-                    self.grid[pos_row][pos_col] = None
+            # Don't clear special tiles yet - they need to detonate first
+            affected_tile = self.get_tile(pos_row, pos_col)
+            if not (affected_tile and affected_tile.is_special()):
+                self.grid[pos_row][pos_col] = None
         
         # Handle chain reactions - special tiles detonate instead of being destroyed
         all_affected = affected_positions.copy()

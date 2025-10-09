@@ -1576,7 +1576,7 @@ class Match3Game:
             # Don't fill board with new tiles - they'll be placed when animations complete
     
     def create_new_tile_animations_improved(self):
-        """Create fall animations for new tiles - tiles exist ONLY in animations until completion"""
+        """Create fall animations for new tiles - tiles are placed on board immediately for game logic"""
         import random
         from board import Tile
         
@@ -1597,7 +1597,10 @@ class Match3Game:
                 color = random.choice(self.board.available_colors)
                 tile = Tile(color)
                 
-                # Stack new tiles above the board in reverse order
+                # Place tile on board immediately so it can interact with special tiles
+                self.board.set_tile(row, col, tile)
+                
+                # Stack new tiles above the board in reverse order for visual animation
                 stack_position = len(empty_positions) - i
                 start_y = self.board_y - stack_position * self.tile_size
                 end_y = self.board_y + row * self.tile_size
@@ -1613,7 +1616,7 @@ class Match3Game:
                 fall_anim.is_new_tile = True
                 self.fall_animations.append(fall_anim)
                 
-                # DO NOT place tile on board - it exists only in animation until completion
+                # Tile is now on board and can be destroyed by special tiles while falling
 
     def create_new_tile_animations(self):
         """Create fall animations for newly spawned tiles"""
@@ -1851,9 +1854,9 @@ class Match3Game:
             
             for fall_anim in self.fall_animations[:]:
                 if fall_anim.update(dt):
-                    # ALL tiles (new and existing) - place on board immediately but delay removal
-                    if hasattr(fall_anim, 'tile') and hasattr(fall_anim, 'to_row') and hasattr(fall_anim, 'col'):
-                        self.board.set_tile(fall_anim.to_row, fall_anim.col, fall_anim.tile)
+                    # Existing tiles should already be on board from start_fall_animation
+                    # New tiles are already placed on board from create_new_tile_animations_improved
+                    # No need to place them again here
                     
                     # Add delay before removal for ALL tiles
                     if not hasattr(fall_anim, 'completion_delay'):

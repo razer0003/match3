@@ -621,6 +621,9 @@ class Match3Game:
     
     def handle_board_wipe_activation(self, pos, board_wipe_tile, target_color):
         """Handle board wipe activation with target color and particles"""
+        # Set the target color on the board wipe tile
+        board_wipe_tile.target_color = target_color
+        
         # Find all positions with the target color
         positions_to_clear = []
         for row in range(self.board.height):

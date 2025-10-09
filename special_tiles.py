@@ -96,19 +96,39 @@ class BoardWipeTile(SpecialTile):
     
     def __init__(self, color=None):
         super().__init__(SpecialTileType.BOARD_WIPE, color)
+        self.target_color = None  # Will be set when activated
     
     def get_affected_positions(self, board, activation_pos: Tuple[int, int]) -> List[Tuple[int, int]]:
-        """Get all positions with the same color as the target"""
-        row, col = activation_pos
-        target_tile = board.get_tile(row, col)
+        """Get all positions with the same color as the target
         
-        if not target_tile or target_tile.is_empty():
-            return []
+        If activated by a special tile (no target color), picks a random color from the board
+        """
+        row, col = activation_pos
+        
+        # Determine target color
+        target_color = self.target_color
+        
+        if target_color is None:
+            # Board wipe activated by another special tile - pick random color
+            # Collect all available colors on the board
+            available_colors = set()
+            for r in range(board.height):
+                for c in range(board.width):
+                    tile = board.get_tile(r, c)
+                    if tile and not tile.is_empty() and not tile.is_special():
+                        available_colors.add(tile.color)
+            
+            if not available_colors:
+                return []
+            
+            # Pick a random color
+            import random
+            target_color = random.choice(list(available_colors))
+            print(f"Board wipe activated by special tile - randomly targeting {target_color.name}")
         
         positions = []
-        target_color = target_tile.color
         
-        # Find all tiles with the same color
+        # Find all tiles with the target color
         for r in range(board.height):
             for c in range(board.width):
                 tile = board.get_tile(r, c)

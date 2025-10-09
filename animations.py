@@ -284,15 +284,12 @@ class PopParticle:
             if particle['life'] <= 0:
                 continue
                 
-            alpha = int(255 * (particle['life'] / particle['max_life']))
-            size = max(1, int(particle['size'] * (particle['life'] / particle['max_life'])))
+            # Keep original size and full opacity for crisp pixel art look
+            size = int(particle['size'])
             
-            # Create surface with alpha
-            particle_surface = pygame.Surface((size * 2, size * 2), pygame.SRCALPHA)
-            pygame.draw.circle(particle_surface, self.color, (size, size), size)
-            particle_surface.set_alpha(alpha)
-            
-            screen.blit(particle_surface, (particle['x'] - size, particle['y'] - size))
+            # Draw solid circle directly on screen - no alpha blending
+            pygame.draw.circle(screen, self.color, 
+                             (int(particle['x']), int(particle['y'])), size)
     
     def is_finished(self) -> bool:
         """Check if particle effect is done"""

@@ -152,12 +152,39 @@ class Match3Game:
         self.selected_tile = None
         self.animating = False
         self.score = 0
-        self.combo_multiplier = 1
+        
+        # New combo system
+        self.combo_points = 0           # Integer points accumulated during combo
+        self.combo_multiplier = 1.0     # Multiplier from 1.0 to 5.0 in 0.2 increments  
+        self.combo_timer = 0.0          # Time since last match (max 3 seconds before combo ends)
+        self.combo_duration = 0.0       # Total time the combo has been active
+        self.combo_timer_paused = False # Pause timer during big animations
+        self.combo_active = False       # Whether we're in an active combo
         
         # Debug mode
         self.debug_mode = False
         self.f3_pressed = False
         self.debug_special_type = 0  # Index for cycling through special tiles
+        
+        # Perk system
+        from perks import PerkManager, PerkSelectionGUI
+        self.perk_manager = PerkManager()
+        self.perk_gui = PerkSelectionGUI(WINDOW_WIDTH, WINDOW_HEIGHT)
+        
+        # Perk-related game variables (set by perks)
+        self.max_combo_multiplier = 5.0  # Can be increased by x6 perk
+        self.no_yellow_tiles = False      # Modified by No Yellow perk
+        self.combo_multiplier_interval = 10.0  # Modified by Fast Multiplier perk
+        
+        # Fireball system
+        self.fireball_active = False
+        self.fireball_pos = (0, 0)
+        self.fireball_target = (0, 0)
+        self.fireball_progress = 0.0
+        self.fireball_rotation = 0.0
+        self.fireball_sprite = None
+        self.fireball_smoke_particles = []
+        self.explosion_particles = []
         
         # Animation systems
         self.fall_animations = []
@@ -291,6 +318,44 @@ class Match3Game:
         # Font for UI
         self.font = pygame.font.Font(None, 36)
         self.big_font = pygame.font.Font(None, 72)
+        
+        # Load custom fonts for combo display
+        try:
+            self.gothic_font_24 = pygame.font.Font("assets/fonts/GothicByte.ttf", 24)
+            self.gothic_font_32 = pygame.font.Font("assets/fonts/GothicByte.ttf", 32)
+            print("✓ Loaded GothicByte font")
+        except:
+            self.gothic_font_24 = pygame.font.Font(None, 24)
+            self.gothic_font_32 = pygame.font.Font(None, 32)
+            print("✗ Could not load GothicByte font, using default")
+            
+        try:
+            # Load Hare font in multiple sizes for progressive scaling
+            self.hare_fonts = {}
+            for size in range(20, 81, 4):  # 20, 24, 28, ..., 80
+                self.hare_fonts[size] = pygame.font.Font("assets/fonts/Hare-PKeLr.otf", size)
+            print("✓ Loaded Hare-PKeLr font (multiple sizes)")
+        except:
+            self.hare_fonts = {}
+            for size in range(20, 81, 4):
+                self.hare_fonts[size] = pygame.font.Font(None, size)
+            print("✗ Could not load Hare-PKeLr font, using default")
+            
+        # Initialize perks and load saved selection
+        self.perk_manager.load_selection(self)
+        
+        # Apply no yellow perk to boards if active
+        self.update_yellow_tile_exclusion()
+    
+    def update_yellow_tile_exclusion(self):
+        """Update board color exclusions based on No Yellow perk"""
+        from board import TileColor
+        excluded_colors = set()
+        if self.no_yellow_tiles:
+            excluded_colors.add(TileColor.YELLOW)
+        self.board.set_excluded_colors(excluded_colors)
+        if hasattr(self, 'boss_board') and self.boss_board is not None:
+            self.boss_board.set_excluded_colors(excluded_colors)
     
     def run(self):
         """Main game loop"""
@@ -326,6 +391,13 @@ class Match3Game:
             # Toggle debug mode with F3+1
             self.debug_mode = not self.debug_mode
             print(f"Debug mode: {'ON' if self.debug_mode else 'OFF'}")
+        elif key == pygame.K_2 and self.f3_pressed:
+            # F3+2: Debug fireball summon
+            self.launch_fireball()
+            print("Debug fireball launched!")
+        elif key == pygame.K_p:
+            # P key: Toggle perk selection GUI
+            self.perk_gui.toggle_visibility()
         elif key == pygame.K_TAB and self.debug_mode:
             # Cycle through special tile types
             from special_tiles import SpecialTileType
@@ -355,6 +427,14 @@ class Match3Game:
     
     def handle_mouse_click(self, pos):
         """Handle mouse clicks for tile selection and swapping"""
+        # Check if perk GUI should handle the click first
+        if self.perk_gui.handle_click(pos, self.perk_manager, self):
+            return
+        
+        # If perk GUI is visible, don't allow tile interactions
+        if self.perk_gui.visible:
+            return
+            
         # Convert screen coordinates to board coordinates (player board only)
         board_x = pos[0] - self.board_x
         board_y = pos[1] - self.board_y
@@ -479,8 +559,16 @@ class Match3Game:
         self.bomb_boardwipe_detonation_timer = 0
         self.bomb_boardwipe_detonation_index = 0
         
-        # Add score for the combo
-        self.score += combo_tile.get_score_bonus()
+        # Pause combo timer during big animation
+        self.pause_combo_timer()
+        
+        # Add points to combo system (special tile combo gives 100 points)
+        self.combo_points += 100
+        if not self.combo_active:
+            self.combo_active = True
+            self.combo_timer = 0.0
+        else:
+            self.combo_timer = 0.0  # Reset combo timer
         
         # Immediately start a fall animation to fill gaps
         self.start_fall_animation()
@@ -520,8 +608,16 @@ class Match3Game:
         self.bomb_boardwipe_detonation_timer = 0
         self.bomb_boardwipe_detonation_index = 0
         
-        # Add score for the combo
-        self.score += combo_tile.get_score_bonus()
+        # Pause combo timer during big animation
+        self.pause_combo_timer()
+        
+        # Add points to combo system (special tile combo gives 100 points)
+        self.combo_points += 100
+        if not self.combo_active:
+            self.combo_active = True
+            self.combo_timer = 0.0
+        else:
+            self.combo_timer = 0.0  # Reset combo timer
         
         # Immediately start a fall animation to fill gaps
         self.start_fall_animation()
@@ -545,8 +641,16 @@ class Match3Game:
         self.rocket_lightning_timer = 0
         self.rocket_lightning_row_index = 0
         
-        # Add score for the combo
-        self.score += combo_tile.get_score_bonus()
+        # Pause combo timer during big animation
+        self.pause_combo_timer()
+        
+        # Add points to combo system (special tile combo gives 100 points)
+        self.combo_points += 100
+        if not self.combo_active:
+            self.combo_active = True
+            self.combo_timer = 0.0
+        else:
+            self.combo_timer = 0.0  # Reset combo timer
         
         # Start with the first row immediately
         self.clear_row_cascade(0)
@@ -567,8 +671,9 @@ class Match3Game:
         self.reality_break_phase = 'diagonal_lightning_1'
         self.reality_tiles_consumed = False  # Reset tile consumption flag
         
-        # Add massive score for ultimate combo
-        self.score += combo_tile.get_score_bonus()
+        # Add points to combo system (special tiles give 100 points)
+        self.combo_points += 100
+        self.update_combo_system()
         
         # Start the Reality Break sequence immediately
         self.start_diagonal_lightning_phase_1()
@@ -656,8 +761,13 @@ class Match3Game:
             self.board_wipe_timer = 0.0
             self.board_wipe_delay = 0.4
             
-            # Add score
-            self.score += board_wipe_tile.get_score_bonus()
+            # Add points to combo system (board wipe gives 20 points for special tile activation)
+            self.combo_points += 20
+            if not self.combo_active:
+                self.combo_active = True
+                self.combo_timer = 0.0
+            else:
+                self.combo_timer = 0.0  # Reset combo timer
             
             print(f"Board wipe targeting {target_color.name} - will clear {len(positions_to_clear)} tiles")
     
@@ -727,6 +837,9 @@ class Match3Game:
                 self.bomb_boardwipe_detonation_timer = 0
                 self.bomb_boardwipe_detonation_index = 0
                 
+                # Resume combo timer after big animation
+                self.resume_combo_timer()
+                
                 print("Bomb boardwipe sequence completed!")
     
     def update_rocket_lightning_animation(self, dt):
@@ -747,6 +860,9 @@ class Match3Game:
                 self.rocket_lightning_rows = []
                 self.rocket_lightning_timer = 0
                 self.rocket_lightning_row_index = 0
+                
+                # Resume combo timer after big animation
+                self.resume_combo_timer()
                 
                 # Now start fall animation to fill all the empty spaces
                 self.start_fall_animation()
@@ -990,10 +1106,8 @@ class Match3Game:
         # For each column, create enough tiles to fill it
         for col in range(self.board.width):
             for row in range(self.board.height):
-                # Choose a random color (same as normal tile generation)
-                valid_colors = [TileColor.RED, TileColor.GREEN, TileColor.BLUE, 
-                               TileColor.YELLOW, TileColor.ORANGE]
-                color = random.choice(valid_colors)
+                # Choose a random color respecting excluded colors (e.g., no yellow perk)
+                color = random.choice(self.board.available_colors)
                 tile = Tile(color)
                 
                 # Calculate starting and ending positions
@@ -1053,8 +1167,9 @@ class Match3Game:
         self.lightning_cross_phase = 'arc_1'
         self.lightning_cross_arc_count = 0
         
-        # Add massive score for lightning cross combo
-        self.score += combo_tile.get_score_bonus()
+        # Add points to combo system (special tiles give 100 points)
+        self.combo_points += 100
+        self.update_combo_system()
         
         # Start the Lightning Cross sequence immediately
         self.start_lightning_cross_arc_1()
@@ -1263,8 +1378,19 @@ class Match3Game:
                 # Create particle effects for all activated special tiles
                 for tile_row, tile_col, special_tile in activated_tiles:
                     self.create_special_effect_particles((tile_row, tile_col), special_tile)
-                self.score += combo_tile.get_score_bonus()
-                self.start_fall_animation()
+                
+                # Add points for special tile combo (100 points)
+                self.combo_points += 100
+                if not self.combo_active:
+                    self.combo_active = True
+                    self.combo_timer = 0.0
+                else:
+                    self.combo_timer = 0.0  # Reset combo timer
+                
+                # For energized bomb (bomb+lightning), don't start falling immediately - 
+                # the black hole animation will handle starting falls when it completes
+                if combo_tile.tile_type != SpecialTileType.ENERGIZED_BOMB:
+                    self.start_fall_animation()
                 return
         
         # Check if either tile is a special tile that should be activated
@@ -1303,7 +1429,10 @@ class Match3Game:
                     # Create particle effects for all activated special tiles
                     for tile_row, tile_col, special_tile in activated_tiles:
                         self.create_special_effect_particles((tile_row, tile_col), special_tile)
-                    self.score += tile1.special_tile.get_score_bonus()
+                    
+                    # Add combo points for special tile activation
+                    self.combo_points += 20  # Special tile = 20 points
+                    self.update_combo_system()
                     special_activated = True
             
             if tile2 and tile2.is_special():
@@ -1319,7 +1448,10 @@ class Match3Game:
                     # Create particle effects for all activated special tiles
                     for tile_row, tile_col, special_tile in activated_tiles:
                         self.create_special_effect_particles((tile_row, tile_col), special_tile)
-                    self.score += tile2.special_tile.get_score_bonus()
+                    
+                    # Add combo points for special tile activation
+                    self.combo_points += 20  # Special tile = 20 points
+                    self.update_combo_system()
                     special_activated = True
         
         if special_activated:
@@ -1354,19 +1486,216 @@ class Match3Game:
         # Create pop animations for matched tiles (but don't clear tiles yet)
         self.create_pop_animations_for_matches(matches)
         
-        # Add score and create particle effects
+        # Add combo points (don't add to main score yet)
         for match in matches:
-            # Calculate score with combo multiplier
-            match_score = match.score * self.combo_multiplier
-            self.score += match_score
+            points = self.calculate_match_points(match)
+            self.combo_points += points
+        
+        # Update combo system
+        self.update_combo_system()
         
         # Store matches to clear after animation completes
         self.pending_matches = matches
         
-        # Increase combo multiplier
-        self.combo_multiplier += 1
-        
         # Don't start falling until pop animations finish
+    
+    def launch_fireball(self):
+        """Launch a fireball that will hit a random tile"""
+        if self.fireball_active:
+            return  # Don't launch if one is already active
+            
+        # Load fireball sprite if not already loaded
+        if not self.fireball_sprite:
+            try:
+                original_sprite = pygame.image.load("sprites/misc/fireball.png")
+                # Scale up the fireball sprite to make it MASSIVE (6x size)
+                original_size = original_sprite.get_size()
+                new_size = (original_size[0] * 6, original_size[1] * 6)
+                self.fireball_sprite = pygame.transform.scale(original_sprite, new_size)
+                print("✓ Loaded fireball sprite: fireball.png (scaled 6x)")
+            except Exception as e:
+                print(f"✗ Could not load fireball sprite: {e}")
+                # Create placeholder orange fireball (much larger)
+                self.fireball_sprite = pygame.Surface((240, 240))
+                self.fireball_sprite.fill((255, 100, 0))
+                
+        # Choose random target tile on player board
+        target_col = random.randint(0, self.board_width - 1)
+        target_row = random.randint(0, self.board_height - 1)
+        self.fireball_target = (
+            self.board_x + target_col * self.tile_size + self.tile_size // 2,
+            self.board_y + target_row * self.tile_size + self.tile_size // 2
+        )
+        
+        # Start from top-right corner
+        self.fireball_pos = (WINDOW_WIDTH - 50, -50)
+        self.fireball_progress = 0.0
+        self.fireball_rotation = 0.0
+        self.fireball_active = True
+        self.fireball_smoke_particles = []
+        
+        print(f"Fireball launched targeting tile!")
+        
+    def update_fireball_animation(self, dt):
+        """Update fireball movement and effects"""
+        if not self.fireball_active:
+            return
+            
+        # Move fireball towards target
+        self.fireball_progress += dt * 2.0  # 0.5 second flight time
+        self.fireball_rotation += dt * 720  # 2 rotations per second
+        
+        # Interpolate position
+        start_x, start_y = WINDOW_WIDTH - 50, -50
+        target_x, target_y = self.fireball_target
+        
+        current_x = start_x + (target_x - start_x) * self.fireball_progress
+        current_y = start_y + (target_y - start_y) * self.fireball_progress
+        self.fireball_pos = (current_x, current_y)
+        
+        # Add dramatic smoke particles behind fireball (spawn multiple per frame)
+        if len(self.fireball_smoke_particles) < 50:  # Allow more particles
+            # Spawn 2-3 particles per frame for dense trail
+            for _ in range(random.randint(2, 3)):
+                if len(self.fireball_smoke_particles) < 50:
+                    self.fireball_smoke_particles.append({
+                        'x': current_x + random.randint(-20, 20),  # Wider spread
+                        'y': current_y + random.randint(-20, 20),
+                        'life': random.uniform(1.2, 2.0),  # Longer life
+                        'size': random.randint(8, 16)  # Much larger particles
+                    })
+        
+        # Check if fireball reached target
+        if self.fireball_progress >= 1.0:
+            self.fireball_impact()
+            
+    def fireball_impact(self):
+        """Handle fireball impact and explosion"""
+        self.fireball_active = False
+        target_x, target_y = self.fireball_target
+        
+        # Convert target position back to grid coordinates
+        grid_col = (target_x - self.board_x) // self.tile_size
+        grid_row = (target_y - self.board_y) // self.tile_size
+        
+        # Create 3x3 explosion
+        positions_to_clear = []
+        for dr in range(-1, 2):
+            for dc in range(-1, 2):
+                row = grid_row + dr
+                col = grid_col + dc
+                if (0 <= row < self.board_height and 0 <= col < self.board_width):
+                    positions_to_clear.append((row, col))
+        
+        # Clear tiles
+        for row, col in positions_to_clear:
+            tile = self.board.get_tile(row, col)
+            if tile:
+                self.board.set_tile(row, col, None)
+                
+        # Create single dramatic explosion at impact center
+        if positions_to_clear:
+            center_x = target_x
+            center_y = target_y
+            self.pixel_particles.create_bomb_explosion(center_x, center_y)
+                
+        # Add points to combo system
+        explosion_points = len(positions_to_clear) * 5  # 5 points per destroyed tile
+        self.combo_points += explosion_points
+        if not self.combo_active:
+            self.combo_active = True
+            self.combo_timer = 0.0
+        else:
+            self.combo_timer = 0.0  # Reset combo timer
+            
+        # Start fall animation
+        self.start_fall_animation()
+        
+        print(f"Fireball exploded! Destroyed {len(positions_to_clear)} tiles for {explosion_points} points")
+
+    def get_tile_color_rgb(self, tile_color):
+        """Convert TileColor enum to RGB tuple"""
+        color_map = {
+            TileColor.RED: (255, 100, 100),
+            TileColor.GREEN: (100, 255, 100),
+            TileColor.BLUE: (100, 100, 255),
+            TileColor.YELLOW: (255, 255, 100),
+            TileColor.ORANGE: (255, 165, 0)
+        }
+        return color_map.get(tile_color, (255, 255, 255))
+
+    def create_tile_particles(self, grid_pos, tile_color):
+        """Create explosion particles when a tile is destroyed"""
+        row, col = grid_pos
+        
+        # Convert grid position to screen position
+        center_x = self.board_x + col * self.tile_size + self.tile_size // 2
+        center_y = self.board_y + row * self.tile_size + self.tile_size // 2
+        
+        # Convert tile color to RGB
+        rgb_color = self.get_tile_color_rgb(tile_color)
+        
+        # Create bomb-style explosion effect for each destroyed tile
+        self.pixel_particles.create_bomb_explosion(center_x, center_y)
+
+    def calculate_match_points(self, match):
+        """Calculate points for a match based on its type"""
+        if hasattr(match, 'is_special_combo') and match.is_special_combo:
+            return 100  # Special tile combo = 100 points
+        elif hasattr(match, 'has_special_tile') and match.has_special_tile:
+            return 20   # Special tile = 20 points
+        else:
+            # Regular matches: 3-match=3pts, 4-match=4pts, 5-match=5pts
+            return len(match.positions)
+    
+    def update_combo_system(self):
+        """Update the combo multiplier and timer"""
+        # Reset the combo timer since we made a match
+        self.combo_timer = 0.0
+        self.combo_active = True
+        
+        # Don't increase multiplier here - it increases every 10 seconds in update_combo_timer
+    
+    def update_combo_timer(self, dt):
+        """Update combo timer and finalize score when combo ends"""
+        if not self.combo_active or self.combo_timer_paused:
+            return
+            
+        self.combo_timer += dt
+        self.combo_duration += dt
+        
+        # Check if we should increase the multiplier (configurable interval)
+        multiplier_threshold = int(self.combo_duration / self.combo_multiplier_interval)
+        target_multiplier = 1.0 + (multiplier_threshold * 0.2)
+        target_multiplier = min(self.max_combo_multiplier, target_multiplier)  # Cap at max multiplier
+        
+        if target_multiplier > self.combo_multiplier:
+            self.combo_multiplier = target_multiplier
+        
+        # Check if combo has ended (3 seconds without a match)
+        if self.combo_timer >= 3.0:
+            self.finalize_combo()
+    
+    def finalize_combo(self):
+        """Apply combo points to main score and reset combo system"""
+        if self.combo_points > 0:
+            final_score = int(self.combo_points * self.combo_multiplier)
+            self.score += final_score
+        
+        # Reset combo system
+        self.combo_points = 0
+        self.combo_multiplier = 1.0
+        self.combo_timer = 0.0
+        self.combo_duration = 0.0
+        self.combo_active = False
+    
+    def pause_combo_timer(self):
+        """Pause the combo timer during big animations"""
+        self.combo_timer_paused = True
+    
+    def resume_combo_timer(self):
+        """Resume the combo timer after big animations"""
+        self.combo_timer_paused = False
     
     def create_pop_animations_for_matches(self, matches):
         """Create pop animations for matched tiles"""
@@ -1651,8 +1980,7 @@ class Match3Game:
             # Continue the chain
             self.process_matches(new_matches)
         else:
-            # Chain is complete, reset combo multiplier
-            self.combo_multiplier = 1
+            # Chain is complete - combo timer will handle reset
             
             # Check if there are possible moves
             if not self.board.has_possible_moves():
@@ -1988,6 +2316,27 @@ class Match3Game:
         if (self.boss_ai and not self.animating and not self.boss_animating and 
             self.boss_move_delay <= 0):
             self.update_boss_ai()
+        
+        # Update combo timer
+        self.update_combo_timer(dt)
+        
+        # Update perk system
+        self.perk_manager.update_perks(self, dt)
+        
+        # Update fireball animation
+        if self.fireball_active:
+            self.update_fireball_animation(dt)
+        
+        # Update smoke particles (always, so they persist after fireball ends)
+        for particle in self.fireball_smoke_particles[:]:
+            particle['life'] -= dt * 2.0
+            particle['y'] -= dt * 20  # Rise upward
+            particle['size'] = max(1, particle['size'] - dt * 3)
+            if particle['life'] <= 0:
+                self.fireball_smoke_particles.remove(particle)
+        
+        # Explosion particles are now handled by self.pixel_particles system
+        # which updates automatically in the main particle system
     
     def draw(self):
         """Draw the entire game"""
@@ -2011,7 +2360,6 @@ class Match3Game:
             # Draw single board layout
             # Draw the border behind everything if available
             self.draw_border()
-            
             # Set up clipping area for the game board
             board_area = pygame.Rect(self.board_x, self.board_y, 
                                     self.board_width * self.tile_size, 
@@ -2038,6 +2386,9 @@ class Match3Game:
         # Draw debug overlay if in debug mode
         if self.debug_mode:
             self.draw_debug_overlay()
+        
+        # Draw perk selection GUI (always last so it's on top of everything)
+        self.perk_gui.draw(self.screen, self.font, self.perk_manager)
         
         pygame.display.flip()
     
@@ -2126,32 +2477,8 @@ class Match3Game:
         
         # If no special sprite, use regular tile sprite
         if sprite_surface is None:
-            # Map tile colors to filenames
-            tile_filenames = {
-                TileColor.RED: "redtile.png",
-                TileColor.GREEN: "greentile.png", 
-                TileColor.BLUE: "bluetile.png",
-                TileColor.YELLOW: "yellowtile.png",
-                TileColor.ORANGE: "orangetile.png"
-            }
-            
-            tile_filename = tile_filenames.get(tile.color)
-            if tile_filename:
-                # Load and scale the tile image with crisp scaling (no smoothing)
-                try:
-                    original_sprite = pygame.image.load(f"sprites/tiles/{tile_filename}").convert_alpha()
-                    # Use pygame.transform.scale instead of smoothscale for crisp pixels
-                    sprite_surface = pygame.transform.scale(original_sprite, (scaled_size, scaled_size))
-                except Exception as e:
-                    print(f"Failed to load sprite {tile_filename}: {e}")
-                    # Fallback to colored rectangle if sprite loading fails
-                    sprite_surface = pygame.Surface((scaled_size, scaled_size))
-                    sprite_surface.fill(tile.color.value)
-            else:
-                print(f"No filename mapping found for color: {tile.color}")
-                # Fallback to colored rectangle
-                sprite_surface = pygame.Surface((scaled_size, scaled_size))
-                sprite_surface.fill(tile.color.value)
+            # Use the sprite manager for proper caching instead of loading directly
+            sprite_surface = self.sprite_manager.get_tile_sprite(tile.color, scaled_size)
         
         # Draw the sprite centered at the current position
         if sprite_surface:
@@ -2614,6 +2941,138 @@ class Match3Game:
         rotated_rect = rotated_dots.get_rect(center=dots_rect.center)
         self.screen.blit(rotated_dots, rotated_rect)
     
+    def draw_combo_display(self):
+        """Draw the combo system display with flashy animations"""
+        if not self.combo_active:
+            return
+            
+        # Always position relative to the player board (left side)
+        # The combo system tracks the player's combos, not the boss's
+        base_board_x = self.board_x
+        base_board_y = self.board_y
+        
+        # Position at top-left of the active board at a slight angle
+        board_x = base_board_x - 120  # Even further left of board
+        board_y = base_board_y - 100  # Higher above the board
+        
+        # Apply slight rotation angle (in radians for math calculations)
+        angle_degrees = 15  # 15 degrees clockwise
+        
+        # Current time for animations
+        current_time = pygame.time.get_ticks()
+        
+        # Draw combo points using GothicByte font with black border
+        points_text = f"Combo: {self.combo_points}"
+        points_color = (255, 255, 255)
+        border_color = (0, 0, 0)
+        
+        # Create border by drawing black text at slight offsets
+        border_offsets = [(-2, -2), (-2, 0), (-2, 2), (0, -2), (0, 2), (2, -2), (2, 0), (2, 2)]
+        
+        # Use bigger font (32 instead of 24)
+        if hasattr(self, 'gothic_font_32'):
+            gothic_font = self.gothic_font_32
+        else:
+            gothic_font = self.gothic_font_24
+            
+        # Draw border
+        for dx, dy in border_offsets:
+            border_surface = gothic_font.render(points_text, True, border_color)
+            rotated_border = pygame.transform.rotate(border_surface, angle_degrees)
+            border_rect = rotated_border.get_rect(center=(board_x + 80 + dx, board_y - 10 + dy))
+            self.screen.blit(rotated_border, border_rect)
+        
+        # Draw main text
+        points_surface = gothic_font.render(points_text, True, points_color)
+        rotated_points = pygame.transform.rotate(points_surface, angle_degrees)
+        points_rect = rotated_points.get_rect(center=(board_x + 80, board_y - 10))
+        self.screen.blit(rotated_points, points_rect)
+        
+        # Draw multiplier with progressive scaling and flashing using Hare font
+        multiplier_text = f"x{self.combo_multiplier:.1f}"
+        
+        # Calculate base size based on multiplier progress (1.0 -> max)
+        max_range = self.max_combo_multiplier - 1.0
+        multiplier_progress = (self.combo_multiplier - 1.0) / max_range if max_range > 0 else 0
+        base_scale = 2.0 + (multiplier_progress * 2.5)  # Scale from 2.0 to 4.5 (make multiplier bigger!)
+        
+        # Add flashing effect for multipliers >= 1.2
+        if self.combo_multiplier >= 1.2:
+            # Flash frequency increases with multiplier
+            flash_speed = 300 - (multiplier_progress * 200)  # 300ms to 100ms
+            flash_phase = (current_time / flash_speed) % 1.0
+            flash_intensity = abs(math.sin(flash_phase * math.pi))
+            
+            # More dramatic pulsing range that increases with multiplier level
+            # At low multipliers: 0.7 to 1.3 range (60% variation)
+            # At high multipliers: 0.5 to 1.5 range (100% variation)
+            pulse_range = 0.3 + (multiplier_progress * 0.5)  # 0.3 to 0.8
+            flash_scale = base_scale * (1.0 - pulse_range + 2 * pulse_range * flash_intensity)
+        else:
+            flash_scale = base_scale
+        
+        # Get appropriate Hare font size - make it bigger
+        target_size = max(30, min(100, int(30 * flash_scale)))  # Increased base size from 20 to 30
+        # Find closest available font size
+        available_sizes = sorted(self.hare_fonts.keys())
+        font_size = min(available_sizes, key=lambda x: abs(x - target_size))
+        combo_font = self.hare_fonts[font_size]
+        
+        # Multiplier color gets more intense as it increases - now with more dramatic progression
+        if self.combo_multiplier < 2.0:
+            # Yellow to orange (x1.0 to x2.0)
+            red_intensity = min(255, int(155 + 100 * (multiplier_progress * 2.5)))
+            multiplier_color = (red_intensity, 255, 100)
+        elif self.combo_multiplier < 3.0:
+            # Orange to red (x2.0 to x3.0)
+            multiplier_color = (255, int(255 - 100 * ((self.combo_multiplier - 2.0) / 1.0)), 100)
+        elif self.combo_multiplier < 4.0:
+            # Red to purple (x3.0 to x4.0)
+            blue_intensity = int(150 * ((self.combo_multiplier - 3.0) / 1.0))
+            multiplier_color = (255, 100, 100 + blue_intensity)
+        else:
+            # Purple to white (x4.0 to x5.0)
+            white_intensity = int(155 * ((self.combo_multiplier - 4.0) / 1.0))
+            multiplier_color = (255, 100 + white_intensity, 255)
+        
+        # Add extra glow effect for higher multipliers
+        if self.combo_multiplier >= 1.6:
+            # Create glow effect by drawing multiple offset copies
+            # Stronger glow for higher multipliers
+            if self.combo_multiplier >= 3.0:
+                # Large glow for x3.0+
+                glow_offsets = [(-2, -2), (-2, 0), (-2, 2), (0, -2), (0, 2), (2, -2), (2, 0), (2, 2),
+                               (-1, -1), (-1, 0), (-1, 1), (0, -1), (0, 1), (1, -1), (1, 0), (1, 1)]
+            else:
+                # Normal glow for x1.6-x2.9
+                glow_offsets = [(-1, -1), (-1, 0), (-1, 1), (0, -1), (0, 1), (1, -1), (1, 0), (1, 1)]
+            
+            # Make glow color match the multiplier progression
+            glow_color = tuple(c // 3 for c in multiplier_color)  # Darker version for glow
+            
+            for dx, dy in glow_offsets:
+                glow_surface = combo_font.render(multiplier_text, True, glow_color)
+                rotated_glow = pygame.transform.rotate(glow_surface, angle_degrees)
+                glow_rect = rotated_glow.get_rect(center=(board_x + 80, board_y + 50 + dx + dy))
+                self.screen.blit(rotated_glow, glow_rect)
+        
+        # Draw main multiplier text with black border (rotated and positioned)
+        border_color = (0, 0, 0)
+        border_offsets = [(-2, -2), (-2, 0), (-2, 2), (0, -2), (0, 2), (2, -2), (2, 0), (2, 2)]
+        
+        # Draw border for multiplier
+        for dx, dy in border_offsets:
+            border_surface = combo_font.render(multiplier_text, True, border_color)
+            rotated_border = pygame.transform.rotate(border_surface, angle_degrees)
+            border_rect = rotated_border.get_rect(center=(board_x + 80 + dx, board_y + 50 + dy))
+            self.screen.blit(rotated_border, border_rect)
+        
+        # Draw main multiplier text
+        multiplier_surface = combo_font.render(multiplier_text, True, multiplier_color)
+        rotated_multiplier = pygame.transform.rotate(multiplier_surface, angle_degrees)
+        multiplier_rect = rotated_multiplier.get_rect(center=(board_x + 80, board_y + 50))
+        self.screen.blit(rotated_multiplier, multiplier_rect)
+    
     def draw_ui(self):
         """Draw UI elements like score, level info, etc."""
         # Draw score
@@ -2624,10 +3083,8 @@ class Match3Game:
         level_text = self.font.render(f"Level: {self.current_level}", True, (255, 255, 255))
         self.screen.blit(level_text, (20, 60))
         
-        # Draw combo multiplier if active
-        if self.combo_multiplier > 1:
-            combo_text = self.font.render(f"Combo x{self.combo_multiplier}!", True, (255, 255, 0))
-            self.screen.blit(combo_text, (20, 100))
+        # Draw combo display
+        self.draw_combo_display()
         
         # Draw particle effects
         for effect in self.particle_effects:
@@ -2650,8 +3107,69 @@ class Match3Game:
             text_rect = instruction_text.get_rect(center=(WINDOW_WIDTH // 2, WINDOW_HEIGHT - 50))
             self.screen.blit(instruction_text, text_rect)
         
+        # Draw smoke particles (always, even after fireball ends)  
+        self.draw_smoke_particles()
+        
+        # Draw fireball if active
+        self.draw_fireball()
+        
+        # Draw explosion particles
+        self.draw_explosion_particles()
+        
         # Draw special tile legend
         self.draw_special_tile_legend()
+    
+    def draw_smoke_particles(self):
+        """Draw smoke particles (always, even after fireball ends)"""
+        for particle in self.fireball_smoke_particles:
+            alpha = int(particle['life'] * 180)  # Brighter smoke
+            size = max(2, int(particle['size']))
+            
+            # Create dramatic smoke particle surface with proper transparency
+            smoke_surface = pygame.Surface((size * 2, size * 2), pygame.SRCALPHA)
+            # Don't set alpha on the surface, we'll use it in the colors instead
+            
+            # Use orange/red smoke colors for more dramatic effect
+            life_ratio = particle['life'] / 2.0  # Normalize life
+            if life_ratio > 0.7:
+                smoke_color = (255, 140, 60)  # Bright orange
+            elif life_ratio > 0.4:
+                smoke_color = (200, 100, 50)  # Dark orange  
+            else:
+                smoke_color = (120, 80, 80)   # Gray-brown
+                
+            # Draw pixel art square instead of circle
+            pygame.draw.rect(smoke_surface, smoke_color, (0, 0, size * 2, size * 2))
+            # Add inner glow effect as smaller square
+            if size > 4:
+                glow_color = (255, 200, 100)
+                glow_size = size
+                glow_offset = size // 2
+                pygame.draw.rect(smoke_surface, glow_color, (glow_offset, glow_offset, glow_size, glow_size))
+            
+            # Apply alpha to the entire surface
+            smoke_surface.set_alpha(alpha)
+            
+            self.screen.blit(smoke_surface, (particle['x'] - size, particle['y'] - size))
+
+    def draw_fireball(self):
+        """Draw fireball sprite"""
+        if not self.fireball_active:
+            return
+            
+        # Draw fireball with rotation
+        if self.fireball_sprite:
+            # Rotate the fireball sprite
+            rotated_fireball = pygame.transform.rotate(self.fireball_sprite, self.fireball_rotation)
+            fireball_rect = rotated_fireball.get_rect(center=self.fireball_pos)
+            self.screen.blit(rotated_fireball, fireball_rect)
+        
+
+    def draw_explosion_particles(self):
+        """Draw explosion particles - now handled by pixel_particles system"""
+        # Explosion particles are now drawn by self.pixel_particles system
+        # which is already handled in the main draw method
+        pass
     
     def draw_special_tile_legend(self):
         """Draw legend showing what each special tile does"""

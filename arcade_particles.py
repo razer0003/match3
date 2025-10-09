@@ -130,7 +130,7 @@ class PixelArcadeParticleSystem:
                 if len(pixel) == 4 and pixel[3] > 0:  # Has alpha and not transparent
                     surface.set_at((x, y), pixel)
         
-        # Scale up for pixel art effect (4x)
+        # Scale up for pixel art effect (4x) - use nearest neighbor to avoid blur
         scaled_size = size * 4
         scaled_surface = pygame.transform.scale(surface, (scaled_size, scaled_size))
         
@@ -525,36 +525,43 @@ class PixelExplosionEffect:
                     self._draw_large_smoke(screen, x, y, size, particle['color'], alpha)
     
     def _draw_pixel_square(self, screen: pygame.Surface, x: int, y: int, size: int, color: Tuple[int, int, int], alpha: int):
-        """Draw a pixelated square with clean edges"""
+        """Draw a pixelated square with clean edges - pure pixel art"""
         # Snap to pixel grid for crisp pixel art
         pixel_x = (x // 2) * 2
         pixel_y = (y // 2) * 2
         pixel_size = max(2, (size // 2) * 2)  # Ensure even sizes
         
-        # Create surface with alpha
-        surf = pygame.Surface((pixel_size, pixel_size))
-        surf.fill(color)
-        surf.set_alpha(alpha)
-        screen.blit(surf, (pixel_x - pixel_size // 2, pixel_y - pixel_size // 2))
+        # Use direct drawing for crisp edges instead of surface blitting
+        if alpha > 50:  # Only draw if visible enough
+            adjusted_color = (
+                min(255, int(color[0] * (alpha / 255.0))),
+                min(255, int(color[1] * (alpha / 255.0))),
+                min(255, int(color[2] * (alpha / 255.0)))
+            )
+            rect = pygame.Rect(pixel_x - pixel_size // 2, pixel_y - pixel_size // 2, pixel_size, pixel_size)
+            pygame.draw.rect(screen, adjusted_color, rect)
     
     def _draw_pixel_cross(self, screen: pygame.Surface, x: int, y: int, size: int, color: Tuple[int, int, int], alpha: int):
-        """Draw a pixelated cross/plus shape"""
+        """Draw a pixelated cross/plus shape - pure pixel art"""
         # Snap to pixel grid
         pixel_x = (x // 2) * 2
         pixel_y = (y // 2) * 2
         pixel_size = max(2, (size // 2) * 2)
         
-        # Draw horizontal bar
-        h_surf = pygame.Surface((pixel_size * 2, pixel_size))
-        h_surf.fill(color)
-        h_surf.set_alpha(alpha)
-        screen.blit(h_surf, (pixel_x - pixel_size, pixel_y - pixel_size // 2))
-        
-        # Draw vertical bar
-        v_surf = pygame.Surface((pixel_size, pixel_size * 2))
-        v_surf.fill(color)
-        v_surf.set_alpha(alpha)
-        screen.blit(v_surf, (pixel_x - pixel_size // 2, pixel_y - pixel_size))
+        if alpha > 50:  # Only draw if visible enough
+            adjusted_color = (
+                min(255, int(color[0] * (alpha / 255.0))),
+                min(255, int(color[1] * (alpha / 255.0))),
+                min(255, int(color[2] * (alpha / 255.0)))
+            )
+            
+            # Draw horizontal bar
+            h_rect = pygame.Rect(pixel_x - pixel_size, pixel_y - pixel_size // 2, pixel_size * 2, pixel_size)
+            pygame.draw.rect(screen, adjusted_color, h_rect)
+            
+            # Draw vertical bar
+            v_rect = pygame.Rect(pixel_x - pixel_size // 2, pixel_y - pixel_size, pixel_size, pixel_size * 2)
+            pygame.draw.rect(screen, adjusted_color, v_rect)
     
     def _draw_pixel_rect(self, screen: pygame.Surface, x: int, y: int, size: int, color: Tuple[int, int, int], alpha: int):
         """Draw a small pixelated rectangle"""
@@ -573,35 +580,22 @@ class PixelExplosionEffect:
         screen.blit(surf, (pixel_x - w // 2, pixel_y - h // 2))
     
     def _draw_large_square(self, screen: pygame.Surface, x: int, y: int, size: int, color: Tuple[int, int, int], alpha: int):
-        """Draw a large explosion core piece with dramatic glow"""
+        """Draw a large explosion core piece - pure pixel art, no glow"""
         # Snap to pixel grid but allow larger sizes
         pixel_x = (x // 4) * 4
         pixel_y = (y // 4) * 4
         pixel_size = max(12, (size // 4) * 4)
         
-        # Draw outer glow first (larger, dimmer)
-        if alpha > 80:
-            outer_glow_size = pixel_size + 8
-            outer_glow_surf = pygame.Surface((outer_glow_size, outer_glow_size))
-            outer_glow_color = (min(255, color[0] + 20), min(255, color[1] + 20), color[2] // 2)
-            outer_glow_surf.fill(outer_glow_color)
-            outer_glow_surf.set_alpha(alpha // 4)
-            screen.blit(outer_glow_surf, (pixel_x - outer_glow_size // 2, pixel_y - outer_glow_size // 2))
-        
-        # Draw inner glow (medium brightness)
-        if alpha > 100:
-            inner_glow_size = pixel_size + 4
-            inner_glow_surf = pygame.Surface((inner_glow_size, inner_glow_size))
-            inner_glow_color = (min(255, color[0] + 40), min(255, color[1] + 40), min(255, color[2] + 20))
-            inner_glow_surf.fill(inner_glow_color)
-            inner_glow_surf.set_alpha(alpha // 2)
-            screen.blit(inner_glow_surf, (pixel_x - inner_glow_size // 2, pixel_y - inner_glow_size // 2))
-        
-        # Draw main bright core
-        surf = pygame.Surface((pixel_size, pixel_size))
-        surf.fill(color)
-        surf.set_alpha(alpha)
-        screen.blit(surf, (pixel_x - pixel_size // 2, pixel_y - pixel_size // 2))
+        # Only draw the main square - no glow effects for crisp pixel art
+        if alpha > 50:  # Only draw if visible enough
+            # Use pygame.draw.rect for crisp edges instead of surface blitting
+            adjusted_color = (
+                min(255, int(color[0] * (alpha / 255.0))),
+                min(255, int(color[1] * (alpha / 255.0))),
+                min(255, int(color[2] * (alpha / 255.0)))
+            )
+            rect = pygame.Rect(pixel_x - pixel_size // 2, pixel_y - pixel_size // 2, pixel_size, pixel_size)
+            pygame.draw.rect(screen, adjusted_color, rect)
     
     def _draw_debris_rect(self, screen: pygame.Surface, x: int, y: int, size: int, color: Tuple[int, int, int], alpha: int):
         """Draw irregular debris chunks with rotation effect"""
@@ -847,7 +841,11 @@ class RocketTrailEffect:
                 self._draw_trail_spark(screen, x, y, size, particle['color'], alpha)
     
     def _draw_rocket(self, screen: pygame.Surface, x: int, y: int, size: int, color: Tuple[int, int, int], alpha: int, vx: float, vy: float):
-        """Draw the main rocket projectile with MASSIVE glow"""
+        """Draw the main rocket projectile as crisp pixel art"""
+        # Skip drawing if too transparent for crisp pixel art
+        if alpha < 50:
+            return
+            
         # Snap to pixel grid
         pixel_x = (x // 2) * 2
         pixel_y = (y // 2) * 2
@@ -861,74 +859,35 @@ class RocketTrailEffect:
             w = pixel_size
             h = pixel_size * 4  # Much longer
         
-        # Draw MASSIVE bright glow first (outermost)
-        if alpha > 100:
-            mega_glow_w = w + 16
-            mega_glow_h = h + 16
-            mega_glow_surf = pygame.Surface((mega_glow_w, mega_glow_h))
-            mega_glow_color = (100, 180, 255)
-            mega_glow_surf.fill(mega_glow_color)
-            mega_glow_surf.set_alpha(alpha // 8)
-            screen.blit(mega_glow_surf, (pixel_x - mega_glow_w // 2, pixel_y - mega_glow_h // 2))
+        # Use direct rectangle drawing for maximum crispness (no alpha blending)
+        rocket_rect = pygame.Rect(pixel_x - w // 2, pixel_y - h // 2, w, h)
+        pygame.draw.rect(screen, color, rocket_rect)
         
-        # Draw medium glow
-        if alpha > 120:
-            glow_w = w + 8
-            glow_h = h + 8
-            glow_surf = pygame.Surface((glow_w, glow_h))
-            glow_color = (150, 200, 255)
-            glow_surf.fill(glow_color)
-            glow_surf.set_alpha(alpha // 4)
-            screen.blit(glow_surf, (pixel_x - glow_w // 2, pixel_y - glow_h // 2))
-        
-        # Draw bright rocket core
-        surf = pygame.Surface((w, h))
-        surf.fill(color)
-        surf.set_alpha(alpha)
-        screen.blit(surf, (pixel_x - w // 2, pixel_y - h // 2))
-        
-        # Draw ultra-bright inner core
+        # Draw ultra-bright inner core as solid rectangle
         inner_w = max(2, w // 2)
         inner_h = max(2, h // 2)
-        inner_surf = pygame.Surface((inner_w, inner_h))
-        inner_surf.fill((255, 255, 255))  # Pure white core
-        inner_surf.set_alpha(alpha)
-        screen.blit(inner_surf, (pixel_x - inner_w // 2, pixel_y - inner_h // 2))
+        inner_rect = pygame.Rect(pixel_x - inner_w // 2, pixel_y - inner_h // 2, inner_w, inner_h)
+        pygame.draw.rect(screen, (255, 255, 255), inner_rect)
     
     def _draw_trail_spark(self, screen: pygame.Surface, x: int, y: int, size: int, color: Tuple[int, int, int], alpha: int):
-        """Draw MASSIVE sparkly trail particles"""
+        """Draw crisp sparkly trail particles as solid pixel art"""
+        # Skip drawing if too transparent for crisp pixel art
+        if alpha < 50:
+            return
+            
         # Snap to pixel grid
         pixel_x = (x // 2) * 2
         pixel_y = (y // 2) * 2
         pixel_size = max(3, (size // 2) * 2)
         
-        # Draw LARGE cross pattern for massive sparkly effect
+        # Draw LARGE cross pattern as solid rectangles (no alpha blending)
         # Horizontal bar - much bigger
-        h_surf = pygame.Surface((pixel_size * 3, pixel_size))
-        h_surf.fill(color)
-        h_surf.set_alpha(alpha)
-        screen.blit(h_surf, (pixel_x - (pixel_size * 3) // 2, pixel_y - pixel_size // 2))
+        h_rect = pygame.Rect(pixel_x - (pixel_size * 3) // 2, pixel_y - pixel_size // 2, pixel_size * 3, pixel_size)
+        pygame.draw.rect(screen, color, h_rect)
         
         # Vertical bar - much bigger
-        v_surf = pygame.Surface((pixel_size, pixel_size * 3))
-        v_surf.fill(color)
-        v_surf.set_alpha(alpha)
-        screen.blit(v_surf, (pixel_x - pixel_size // 2, pixel_y - (pixel_size * 3) // 2))
-        
-        # Add glow around spark if bright enough
-        if alpha > 150:
-            # Glow horizontal bar
-            glow_h_surf = pygame.Surface((pixel_size * 4, pixel_size + 2))
-            glow_color = (min(255, color[0] + 40), min(255, color[1] + 40), 255)
-            glow_h_surf.fill(glow_color)
-            glow_h_surf.set_alpha(alpha // 3)
-            screen.blit(glow_h_surf, (pixel_x - (pixel_size * 4) // 2, pixel_y - (pixel_size + 2) // 2))
-            
-            # Glow vertical bar
-            glow_v_surf = pygame.Surface((pixel_size + 2, pixel_size * 4))
-            glow_v_surf.fill(glow_color)
-            glow_v_surf.set_alpha(alpha // 3)
-            screen.blit(glow_v_surf, (pixel_x - (pixel_size + 2) // 2, pixel_y - (pixel_size * 4) // 2))
+        v_rect = pygame.Rect(pixel_x - pixel_size // 2, pixel_y - (pixel_size * 3) // 2, pixel_size, pixel_size * 3)
+        pygame.draw.rect(screen, color, v_rect)
     
     def is_finished(self) -> bool:
         """Check if rocket trail is finished"""
@@ -1113,7 +1072,11 @@ class BombRocketTrailEffect:
                 self._draw_bomb_trail_spark(screen, x, y, size, particle['color'], alpha)
     
     def _draw_bomb_rocket(self, screen: pygame.Surface, x: int, y: int, size: int, color: Tuple[int, int, int], alpha: int, vx: float, vy: float):
-        """Draw the main bomb rocket projectile - HUGE with bomb colors"""
+        """Draw the main bomb rocket projectile as crisp pixel art - HUGE with bomb colors"""
+        # Skip drawing if too transparent for crisp pixel art
+        if alpha < 50:
+            return
+            
         # Snap to pixel grid but use larger grid for more pixelated look
         pixel_grid = 4
         pixel_x = (x // pixel_grid) * pixel_grid
@@ -1128,75 +1091,36 @@ class BombRocketTrailEffect:
             w = pixel_size * 2  # Wider
             h = pixel_size * 6  # MUCH MUCH longer
         
-        # Draw ENORMOUS bright glow first (outermost)
-        if alpha > 80:
-            mega_glow_w = w + 32
-            mega_glow_h = h + 32
-            mega_glow_surf = pygame.Surface((mega_glow_w, mega_glow_h))
-            mega_glow_color = (150, 50, 0)  # Dark orange glow
-            mega_glow_surf.fill(mega_glow_color)
-            mega_glow_surf.set_alpha(alpha // 6)
-            screen.blit(mega_glow_surf, (pixel_x - mega_glow_w // 2, pixel_y - mega_glow_h // 2))
+        # Use direct rectangle drawing for maximum crispness (no alpha blending)
+        rocket_rect = pygame.Rect(pixel_x - w // 2, pixel_y - h // 2, w, h)
+        pygame.draw.rect(screen, color, rocket_rect)
         
-        # Draw medium glow
-        if alpha > 100:
-            glow_w = w + 16
-            glow_h = h + 16
-            glow_surf = pygame.Surface((glow_w, glow_h))
-            glow_color = (255, 80, 20)  # Bright orange glow
-            glow_surf.fill(glow_color)
-            glow_surf.set_alpha(alpha // 3)
-            screen.blit(glow_surf, (pixel_x - glow_w // 2, pixel_y - glow_h // 2))
-        
-        # Draw bright rocket core
-        surf = pygame.Surface((w, h))
-        surf.fill(color)
-        surf.set_alpha(alpha)
-        screen.blit(surf, (pixel_x - w // 2, pixel_y - h // 2))
-        
-        # Draw ultra-bright inner core
+        # Draw ultra-bright inner core as solid rectangle
         inner_w = max(4, w // 3)
         inner_h = max(4, h // 3)
-        inner_surf = pygame.Surface((inner_w, inner_h))
-        inner_surf.fill((255, 255, 180))  # Hot yellow-white core
-        inner_surf.set_alpha(alpha)
-        screen.blit(inner_surf, (pixel_x - inner_w // 2, pixel_y - inner_h // 2))
+        inner_rect = pygame.Rect(pixel_x - inner_w // 2, pixel_y - inner_h // 2, inner_w, inner_h)
+        pygame.draw.rect(screen, (255, 255, 180), inner_rect)
     
     def _draw_bomb_trail_spark(self, screen: pygame.Surface, x: int, y: int, size: int, color: Tuple[int, int, int], alpha: int):
-        """Draw HUGE bomb-colored trail particles"""
+        """Draw HUGE bomb-colored trail particles as crisp pixel art"""
+        # Skip drawing if too transparent for crisp pixel art
+        if alpha < 50:
+            return
+            
         # Snap to pixel grid
         pixel_grid = 4
         pixel_x = (x // pixel_grid) * pixel_grid
         pixel_y = (y // pixel_grid) * pixel_grid
         pixel_size = max(4, (size // 2) * 2)
         
-        # Draw HUGE cross pattern for massive bomb trail effect
+        # Draw HUGE cross pattern as solid rectangles (no alpha blending)
         # Horizontal bar - enormous
-        h_surf = pygame.Surface((pixel_size * 4, pixel_size))
-        h_surf.fill(color)
-        h_surf.set_alpha(alpha)
-        screen.blit(h_surf, (pixel_x - (pixel_size * 4) // 2, pixel_y - pixel_size // 2))
+        h_rect = pygame.Rect(pixel_x - (pixel_size * 4) // 2, pixel_y - pixel_size // 2, pixel_size * 4, pixel_size)
+        pygame.draw.rect(screen, color, h_rect)
         
         # Vertical bar - enormous
-        v_surf = pygame.Surface((pixel_size, pixel_size * 4))
-        v_surf.fill(color)
-        v_surf.set_alpha(alpha)
-        screen.blit(v_surf, (pixel_x - pixel_size // 2, pixel_y - (pixel_size * 4) // 2))
-        
-        # Add bomb-colored glow around spark if bright enough
-        if alpha > 120:
-            # Glow horizontal bar
-            glow_h_surf = pygame.Surface((pixel_size * 6, pixel_size + 4))
-            glow_color = (min(255, color[0] + 60), min(255, color[1] + 40), 0)  # Bomb glow
-            glow_h_surf.fill(glow_color)
-            glow_h_surf.set_alpha(alpha // 4)
-            screen.blit(glow_h_surf, (pixel_x - (pixel_size * 6) // 2, pixel_y - (pixel_size + 4) // 2))
-            
-            # Glow vertical bar
-            glow_v_surf = pygame.Surface((pixel_size + 4, pixel_size * 6))
-            glow_v_surf.fill(glow_color)
-            glow_v_surf.set_alpha(alpha // 4)
-            screen.blit(glow_v_surf, (pixel_x - (pixel_size + 4) // 2, pixel_y - (pixel_size * 6) // 2))
+        v_rect = pygame.Rect(pixel_x - pixel_size // 2, pixel_y - (pixel_size * 4) // 2, pixel_size, pixel_size * 4)
+        pygame.draw.rect(screen, color, v_rect)
     
     def is_finished(self) -> bool:
         """Check if bomb rocket trail is finished"""
@@ -1415,69 +1339,51 @@ class LightningArcEffect:
             self._draw_pixel_square(screen, line_x, line_y, thickness, color, alpha)
     
     def _draw_electric_spark(self, screen: pygame.Surface, x: int, y: int, size: int, color: Tuple[int, int, int], alpha: int):
-        """Draw electric sparks as bright crosses with glow"""
+        """Draw electric sparks as bright crosses with crisp pixel art"""
+        # Skip drawing if too transparent for crisp pixel art
+        if alpha < 50:
+            return
+            
         # Draw large cross pattern
         pixel_x = (x // 2) * 2
         pixel_y = (y // 2) * 2
         pixel_size = max(2, (size // 2) * 2)
         
-        # Horizontal bar
-        h_surf = pygame.Surface((pixel_size * 3, pixel_size))
-        h_surf.fill(color)
-        h_surf.set_alpha(alpha)
-        screen.blit(h_surf, (pixel_x - (pixel_size * 3) // 2, pixel_y - pixel_size // 2))
+        # Draw horizontal bar as solid rectangle (no alpha blending)
+        h_rect = pygame.Rect(pixel_x - (pixel_size * 3) // 2, pixel_y - pixel_size // 2, pixel_size * 3, pixel_size)
+        pygame.draw.rect(screen, color, h_rect)
         
-        # Vertical bar
-        v_surf = pygame.Surface((pixel_size, pixel_size * 3))
-        v_surf.fill(color)
-        v_surf.set_alpha(alpha)
-        screen.blit(v_surf, (pixel_x - pixel_size // 2, pixel_y - (pixel_size * 3) // 2))
-        
-        # Add glow if bright enough
-        if alpha > 150:
-            glow_size = pixel_size + 2
-            # Glow horizontal
-            glow_h_surf = pygame.Surface((pixel_size * 4, glow_size))
-            glow_h_surf.fill((200, 200, 255))
-            glow_h_surf.set_alpha(alpha // 4)
-            screen.blit(glow_h_surf, (pixel_x - (pixel_size * 4) // 2, pixel_y - glow_size // 2))
-            
-            # Glow vertical
-            glow_v_surf = pygame.Surface((glow_size, pixel_size * 4))
-            glow_v_surf.fill((200, 200, 255))
-            glow_v_surf.set_alpha(alpha // 4)
-            screen.blit(glow_v_surf, (pixel_x - glow_size // 2, pixel_y - (pixel_size * 4) // 2))
+        # Draw vertical bar as solid rectangle (no alpha blending)
+        v_rect = pygame.Rect(pixel_x - pixel_size // 2, pixel_y - (pixel_size * 3) // 2, pixel_size, pixel_size * 3)
+        pygame.draw.rect(screen, color, v_rect)
     
     def _draw_flash(self, screen: pygame.Surface, x: int, y: int, size: int, color: Tuple[int, int, int], alpha: int):
-        """Draw bright flash particles"""
+        """Draw bright flash particles as crisp pixel art"""
+        # Skip drawing if too transparent for crisp pixel art
+        if alpha < 50:
+            return
+            
         pixel_x = (x // 2) * 2
         pixel_y = (y // 2) * 2
         pixel_size = max(2, (size // 2) * 2)
         
-        # Draw main flash square
-        surf = pygame.Surface((pixel_size, pixel_size))
-        surf.fill(color)
-        surf.set_alpha(alpha)
-        screen.blit(surf, (pixel_x - pixel_size // 2, pixel_y - pixel_size // 2))
-        
-        # Add bright glow around flash
-        if alpha > 100:
-            glow_size = pixel_size + 4
-            glow_surf = pygame.Surface((glow_size, glow_size))
-            glow_surf.fill((220, 220, 255))
-            glow_surf.set_alpha(alpha // 3)
-            screen.blit(glow_surf, (pixel_x - glow_size // 2, pixel_y - glow_size // 2))
+        # Draw main flash square as solid rectangle (no alpha blending)
+        flash_rect = pygame.Rect(pixel_x - pixel_size // 2, pixel_y - pixel_size // 2, pixel_size, pixel_size)
+        pygame.draw.rect(screen, color, flash_rect)
     
     def _draw_pixel_square(self, screen: pygame.Surface, x: int, y: int, size: int, color: Tuple[int, int, int], alpha: int):
-        """Draw a pixelated square"""
+        """Draw a crisp pixelated square as solid rectangle (no alpha blending)"""
+        # Skip drawing if too transparent for crisp pixel art
+        if alpha < 50:
+            return
+            
         pixel_x = (x // 2) * 2
         pixel_y = (y // 2) * 2
         pixel_size = max(2, (size // 2) * 2)
         
-        surf = pygame.Surface((pixel_size, pixel_size))
-        surf.fill(color)
-        surf.set_alpha(alpha)
-        screen.blit(surf, (pixel_x - pixel_size // 2, pixel_y - pixel_size // 2))
+        # Draw as solid rectangle for maximum crispness (no alpha blending)
+        square_rect = pygame.Rect(pixel_x - pixel_size // 2, pixel_y - pixel_size // 2, pixel_size, pixel_size)
+        pygame.draw.rect(screen, color, square_rect)
     
     def is_finished(self) -> bool:
         """Check if lightning arc is finished"""
@@ -2057,6 +1963,10 @@ class BoardWipeArcEffect:
     
     def _draw_thick_line(self, screen: pygame.Surface, x1: int, y1: int, x2: int, y2: int, thickness: int, color: Tuple[int, int, int], alpha: int):
         """Draw a thick pixelated line with better pixel alignment"""
+        # Skip drawing if too transparent for crisp pixel art
+        if alpha < 50:
+            return
+            
         # Calculate line direction and length
         dx = x2 - x1
         dy = y2 - y1
@@ -2079,116 +1989,96 @@ class BoardWipeArcEffect:
             pixel_y = (line_y // pixel_grid) * pixel_grid
             pixel_size = max(pixel_grid, thickness * 2)  # Less multiplication for thinner lines
             
-            surf = pygame.Surface((pixel_size, pixel_size))
-            surf.fill(color)
-            surf.set_alpha(alpha)
-            screen.blit(surf, (pixel_x - pixel_size // 2, pixel_y - pixel_size // 2))
+            # Draw as solid rectangle instead of surface with alpha
+            rect = pygame.Rect(pixel_x - pixel_size // 2, pixel_y - pixel_size // 2, pixel_size, pixel_size)
+            pygame.draw.rect(screen, color, rect)
     
     def _draw_traveling_spark(self, screen: pygame.Surface, x: int, y: int, size: int, color: Tuple[int, int, int], alpha: int):
         """Draw the traveling spark as a bright star"""
+        if alpha < 50:
+            return  # Skip very transparent particles
+            
         pixel_x = (x // 2) * 2
         pixel_y = (y // 2) * 2
         pixel_size = max(3, (size // 2) * 2)
         
-        # Draw main cross
+        # Draw main cross as solid rectangles
         # Horizontal bar
-        h_surf = pygame.Surface((pixel_size * 3, pixel_size))
-        h_surf.fill(color)
-        h_surf.set_alpha(alpha)
-        screen.blit(h_surf, (pixel_x - (pixel_size * 3) // 2, pixel_y - pixel_size // 2))
+        h_rect = pygame.Rect(pixel_x - (pixel_size * 3) // 2, pixel_y - pixel_size // 2, pixel_size * 3, pixel_size)
+        pygame.draw.rect(screen, color, h_rect)
         
         # Vertical bar
-        v_surf = pygame.Surface((pixel_size, pixel_size * 3))
-        v_surf.fill(color)
-        v_surf.set_alpha(alpha)
-        screen.blit(v_surf, (pixel_x - pixel_size // 2, pixel_y - (pixel_size * 3) // 2))
-        
-        # Add glow
-        if alpha > 150:
-            glow_size = pixel_size + 2
-            # Glow horizontal
-            glow_h_surf = pygame.Surface((pixel_size * 4, glow_size))
-            glow_h_surf.fill((255, 255, 255))
-            glow_h_surf.set_alpha(alpha // 2)
-            screen.blit(glow_h_surf, (pixel_x - (pixel_size * 4) // 2, pixel_y - glow_size // 2))
-            
-            # Glow vertical
-            glow_v_surf = pygame.Surface((glow_size, pixel_size * 4))
-            glow_v_surf.fill((255, 255, 255))
-            glow_v_surf.set_alpha(alpha // 2)
-            screen.blit(glow_v_surf, (pixel_x - glow_size // 2, pixel_y - (pixel_size * 4) // 2))
+        v_rect = pygame.Rect(pixel_x - pixel_size // 2, pixel_y - (pixel_size * 3) // 2, pixel_size, pixel_size * 3)
+        pygame.draw.rect(screen, color, v_rect)
+
     
     def _draw_arc_sparkle(self, screen: pygame.Surface, x: int, y: int, size: int, color: Tuple[int, int, int], alpha: int):
-        """Draw arc sparkles as small crosses with better pixelation"""
+        """Draw arc sparkles as crisp pixelated crosses"""
+        # Skip drawing if too transparent for crisp pixel art
+        if alpha < 50:
+            return
+            
         pixel_grid = 4  # Larger pixel grid for more pixelated look
         pixel_x = (x // pixel_grid) * pixel_grid
         pixel_y = (y // pixel_grid) * pixel_grid
         pixel_size = max(pixel_grid, (size // 2) * pixel_grid)
         
-        # Horizontal bar
-        h_surf = pygame.Surface((pixel_size * 2, pixel_size))
-        h_surf.fill(color)
-        h_surf.set_alpha(alpha)
-        screen.blit(h_surf, (pixel_x - pixel_size, pixel_y - pixel_size // 2))
+        # Draw horizontal bar as solid rectangle
+        h_rect = pygame.Rect(pixel_x - pixel_size, pixel_y - pixel_size // 2, pixel_size * 2, pixel_size)
+        pygame.draw.rect(screen, color, h_rect)
         
-        # Vertical bar
-        v_surf = pygame.Surface((pixel_size, pixel_size * 2))
-        v_surf.fill(color)
-        v_surf.set_alpha(alpha)
-        screen.blit(v_surf, (pixel_x - pixel_size // 2, pixel_y - pixel_size))
+        # Draw vertical bar as solid rectangle
+        v_rect = pygame.Rect(pixel_x - pixel_size // 2, pixel_y - pixel_size, pixel_size, pixel_size * 2)
+        pygame.draw.rect(screen, color, v_rect)
         
     def _draw_energy_burst(self, screen: pygame.Surface, x: int, y: int, size: int, color: Tuple[int, int, int], alpha: int):
-        """Draw energy bursts as bright pixelated stars"""
+        """Draw energy bursts as crisp pixelated stars"""
+        # Skip drawing if too transparent for crisp pixel art
+        if alpha < 50:
+            return
+            
         pixel_grid = 4
         pixel_x = (x // pixel_grid) * pixel_grid
         pixel_y = (y // pixel_grid) * pixel_grid
         pixel_size = max(pixel_grid, (size // 2) * pixel_grid)
         
-        # Main cross
-        h_surf = pygame.Surface((pixel_size * 3, pixel_size))
-        h_surf.fill(color)
-        h_surf.set_alpha(alpha)
-        screen.blit(h_surf, (pixel_x - (pixel_size * 3) // 2, pixel_y - pixel_size // 2))
+        # Draw main cross as solid rectangles
+        h_rect = pygame.Rect(pixel_x - (pixel_size * 3) // 2, pixel_y - pixel_size // 2, pixel_size * 3, pixel_size)
+        pygame.draw.rect(screen, color, h_rect)
         
-        v_surf = pygame.Surface((pixel_size, pixel_size * 3))
-        v_surf.fill(color)
-        v_surf.set_alpha(alpha)
-        screen.blit(v_surf, (pixel_x - pixel_size // 2, pixel_y - (pixel_size * 3) // 2))
+        v_rect = pygame.Rect(pixel_x - pixel_size // 2, pixel_y - (pixel_size * 3) // 2, pixel_size, pixel_size * 3)
+        pygame.draw.rect(screen, color, v_rect)
         
-        # Diagonal arms for star effect
+        # Diagonal arms for star effect (as solid rectangles)
         if size >= 3:
             # Top-right diagonal
-            d1_surf = pygame.Surface((pixel_size * 2, pixel_size))
-            d1_surf.fill(color)
-            d1_surf.set_alpha(alpha)
-            screen.blit(d1_surf, (pixel_x + pixel_size // 2, pixel_y - pixel_size * 2))
+            d1_rect = pygame.Rect(pixel_x + pixel_size // 2, pixel_y - pixel_size * 2, pixel_size * 2, pixel_size)
+            pygame.draw.rect(screen, color, d1_rect)
     
     def _draw_crackle_spark(self, screen: pygame.Surface, x: int, y: int, size: int, color: Tuple[int, int, int], alpha: int):
         """Draw crackle sparks as tiny bright pixelated dots"""
+        # Skip drawing if too transparent for crisp pixel art
+        if alpha < 50:
+            return
+            
         pixel_grid = 4
         pixel_x = (x // pixel_grid) * pixel_grid
         pixel_y = (y // pixel_grid) * pixel_grid
         pixel_size = max(pixel_grid, size * pixel_grid)
         
-        # Main dot
-        surf = pygame.Surface((pixel_size, pixel_size))
-        surf.fill(color)
-        surf.set_alpha(alpha)
-        screen.blit(surf, (pixel_x - pixel_size // 2, pixel_y - pixel_size // 2))
+        # Main dot as solid rectangle
+        main_rect = pygame.Rect(pixel_x - pixel_size // 2, pixel_y - pixel_size // 2, pixel_size, pixel_size)
+        pygame.draw.rect(screen, color, main_rect)
         
-        # Add small cross pattern for crackling effect
+        # Add small cross pattern for crackling effect as solid rectangles
         if size >= 2:
             # Tiny horizontal
-            h_surf = pygame.Surface((pixel_size * 2, pixel_grid))
-            h_surf.fill(color)
-            h_surf.set_alpha(alpha // 2)
-            screen.blit(h_surf, (pixel_x - pixel_size, pixel_y - pixel_grid // 2))
+            h_rect = pygame.Rect(pixel_x - pixel_size, pixel_y - pixel_grid // 2, pixel_size * 2, pixel_grid)
+            pygame.draw.rect(screen, color, h_rect)
             
             # Tiny vertical  
-            v_surf = pygame.Surface((pixel_grid, pixel_size * 2))
-            v_surf.fill(color)
-            v_surf.set_alpha(alpha // 2)
-            screen.blit(v_surf, (pixel_x - pixel_grid // 2, pixel_y - pixel_size))
+            v_rect = pygame.Rect(pixel_x - pixel_grid // 2, pixel_y - pixel_size, pixel_grid, pixel_size * 2)
+            pygame.draw.rect(screen, color, v_rect)
     
     def is_finished(self) -> bool:
         """Check if board wipe arc effect is finished"""
@@ -2742,20 +2632,18 @@ class DiagonalLightningEffect:
         self.elapsed += dt
     
     def draw(self, screen: pygame.Surface):
-        """Draw lightning effect"""
+        """Draw lightning effect as crisp pixel art"""
         if self.elapsed >= self.duration:
             return
             
         import pygame
         import random
+        import math
         
         # Intense flicker effect
         base_alpha = int(255 * (1.0 - self.elapsed / self.duration))
         
-        # Create lightning surface for the whole screen
-        lightning_surf = pygame.Surface(screen.get_size(), pygame.SRCALPHA)
-        
-        # Draw all branches with multiple layers for intensity
+        # Draw all branches using pixelated line drawing
         for branch in self.branches:
             start_pos = branch['start']
             end_pos = branch['end']
@@ -2766,23 +2654,48 @@ class DiagonalLightningEffect:
             flicker_chance = 0.2 if is_main else 0.4
             alpha = base_alpha if random.random() > flicker_chance else base_alpha // 3
             
-            # Draw multiple layers for thickness and glow
-            # Outer glow (largest, most transparent)
-            if thickness > 4:
-                pygame.draw.line(lightning_surf, (*self.color, alpha // 4), start_pos, end_pos, thickness + 8)
+            # Draw lightning using pixel squares instead of antialiased lines
+            self._draw_pixelated_line(screen, start_pos, end_pos, thickness, self.color, alpha)
             
-            # Middle layer (medium thickness)
-            if thickness > 2:
-                pygame.draw.line(lightning_surf, (*self.color, alpha // 2), start_pos, end_pos, thickness + 4)
-            
-            # Core lightning bolt (main color)
-            pygame.draw.line(lightning_surf, (*self.color, alpha), start_pos, end_pos, thickness)
-            
-            # Bright white core for main bolts
+            # Draw bright white core for main bolts using pixel squares
             if is_main and thickness > 3:
-                pygame.draw.line(lightning_surf, (255, 255, 255, alpha), start_pos, end_pos, max(1, thickness // 2))
+                core_thickness = max(1, thickness // 2)
+                self._draw_pixelated_line(screen, start_pos, end_pos, core_thickness, (255, 255, 255), alpha)
+    
+    def _draw_pixelated_line(self, screen: pygame.Surface, start_pos: Tuple[float, float], end_pos: Tuple[float, float], thickness: int, color: Tuple[int, int, int], alpha: int):
+        """Draw a thick pixelated line using solid rectangles (no alpha blending)"""
+        import math
         
-        screen.blit(lightning_surf, (0, 0))
+        # Skip drawing if too transparent for crisp pixel art
+        if alpha < 50:
+            return
+        
+        x1, y1 = start_pos
+        x2, y2 = end_pos
+        
+        # Calculate distance and direction
+        dx = x2 - x1
+        dy = y2 - y1
+        distance = max(1, int(math.sqrt(dx * dx + dy * dy)))
+        
+        if distance == 0:
+            return
+        
+        # Draw line as series of solid rectangles for crisp pixels
+        pixel_grid = 2  # Snap to 2x2 pixel grid
+        for i in range(0, distance, pixel_grid):
+            progress = i / distance
+            line_x = int(x1 + dx * progress)
+            line_y = int(y1 + dy * progress)
+            
+            # Snap to pixel grid
+            pixel_x = (line_x // pixel_grid) * pixel_grid
+            pixel_y = (line_y // pixel_grid) * pixel_grid
+            pixel_thickness = max(pixel_grid, (thickness // pixel_grid) * pixel_grid)
+            
+            # Draw solid rectangle for maximum crispness (no alpha blending)
+            segment_rect = pygame.Rect(pixel_x - pixel_thickness // 2, pixel_y - pixel_thickness // 2, pixel_thickness, pixel_thickness)
+            pygame.draw.rect(screen, color, segment_rect)
     
     def is_finished(self) -> bool:
         """Check if lightning effect is finished"""

@@ -650,6 +650,17 @@ class Match3Game:
             # Create board wipe arc effect
             self.pixel_particles.create_board_wipe_arcs(center_x, center_y, target_positions, target_color)
             
+            # Create pop particles for all affected tiles
+            for target_pos in positions_to_clear:
+                screen_pos = self.get_tile_screen_pos(target_pos)
+                pop_particle = PopParticle(
+                    screen_pos[0] + self.tile_size // 2,
+                    screen_pos[1] + self.tile_size // 2,
+                    target_color.value,
+                    False
+                )
+                self.pop_particles.append(pop_particle)
+            
             # Add dramatic screen shake for board wipe
             self.start_screen_shake(10.0, 0.6)  # Long shake for board wipe
             
@@ -1252,6 +1263,14 @@ class Match3Game:
                             }
                 print(f"Stored {len(self.original_tile_positions)} tiles for black hole animation")
             
+            # Store tile data before activation for pop particles
+            tiles_to_animate = []
+            for r in range(self.board.height):
+                for c in range(self.board.width):
+                    tile = self.board.get_tile(r, c)
+                    if tile and not tile.is_empty() and not tile.is_special():
+                        tiles_to_animate.append((r, c, tile.color))
+            
             # Activate the combo tile immediately
             result = self.board.activate_special_tile(*combo_pos)
             if isinstance(result, tuple) and len(result) == 2:
@@ -1266,6 +1285,21 @@ class Match3Game:
                 # Create particle effects for all activated special tiles
                 for tile_row, tile_col, special_tile in activated_tiles:
                     self.create_special_effect_particles((tile_row, tile_col), special_tile)
+                
+                # Create pop particles for affected tiles
+                for pos in affected_positions:
+                    for r, c, color in tiles_to_animate:
+                        if (r, c) == pos:
+                            screen_pos = self.get_tile_screen_pos(pos)
+                            pop_particle = PopParticle(
+                                screen_pos[0] + self.tile_size // 2,
+                                screen_pos[1] + self.tile_size // 2,
+                                color.value,
+                                False
+                            )
+                            self.pop_particles.append(pop_particle)
+                            break
+                
                 self.score += combo_tile.get_score_bonus()
                 self.start_fall_animation()
                 return
@@ -1294,6 +1328,14 @@ class Match3Game:
         else:
             # Handle other special tiles normally
             if tile1 and tile1.is_special():
+                # Store tile data before activation for pop particles
+                tiles_to_animate = []
+                for r in range(self.board.height):
+                    for c in range(self.board.width):
+                        tile = self.board.get_tile(r, c)
+                        if tile and not tile.is_empty() and not tile.is_special():
+                            tiles_to_animate.append((r, c, tile.color))
+                
                 result = self.board.activate_special_tile(*pos1)
                 if isinstance(result, tuple) and len(result) == 2:
                     affected_positions, activated_tiles = result
@@ -1306,10 +1348,34 @@ class Match3Game:
                     # Create particle effects for all activated special tiles
                     for tile_row, tile_col, special_tile in activated_tiles:
                         self.create_special_effect_particles((tile_row, tile_col), special_tile)
+                    
+                    # Create pop particles for affected tiles
+                    for pos in affected_positions:
+                        # Find matching tile in stored data
+                        for r, c, color in tiles_to_animate:
+                            if (r, c) == pos:
+                                screen_pos = self.get_tile_screen_pos(pos)
+                                pop_particle = PopParticle(
+                                    screen_pos[0] + self.tile_size // 2,
+                                    screen_pos[1] + self.tile_size // 2,
+                                    color.value,  # Get RGB tuple from TileColor enum
+                                    False
+                                )
+                                self.pop_particles.append(pop_particle)
+                                break
+                    
                     self.score += tile1.special_tile.get_score_bonus()
                     special_activated = True
             
             if tile2 and tile2.is_special():
+                # Store tile data before activation for pop particles
+                tiles_to_animate = []
+                for r in range(self.board.height):
+                    for c in range(self.board.width):
+                        tile = self.board.get_tile(r, c)
+                        if tile and not tile.is_empty() and not tile.is_special():
+                            tiles_to_animate.append((r, c, tile.color))
+                
                 result = self.board.activate_special_tile(*pos2)
                 if isinstance(result, tuple) and len(result) == 2:
                     affected_positions, activated_tiles = result
@@ -1322,6 +1388,22 @@ class Match3Game:
                     # Create particle effects for all activated special tiles
                     for tile_row, tile_col, special_tile in activated_tiles:
                         self.create_special_effect_particles((tile_row, tile_col), special_tile)
+                    
+                    # Create pop particles for affected tiles
+                    for pos in affected_positions:
+                        # Find matching tile in stored data
+                        for r, c, color in tiles_to_animate:
+                            if (r, c) == pos:
+                                screen_pos = self.get_tile_screen_pos(pos)
+                                pop_particle = PopParticle(
+                                    screen_pos[0] + self.tile_size // 2,
+                                    screen_pos[1] + self.tile_size // 2,
+                                    color.value,  # Get RGB tuple from TileColor enum
+                                    False
+                                )
+                                self.pop_particles.append(pop_particle)
+                                break
+                    
                     self.score += tile2.special_tile.get_score_bonus()
                     special_activated = True
         

@@ -297,3 +297,147 @@ class PopParticle:
     def is_finished(self) -> bool:
         """Check if particle effect is done"""
         return self.life <= 0 and len(self.particles) == 0
+
+class PlopAnimation(Animation):
+    """Animation for tiles being deleted by special tiles - plop out effect"""
+    
+    def __init__(self, row: int, col: int, tile_data, screen_x: float, screen_y: float, duration: float = 0.2):
+        super().__init__(duration)
+        self.row = row
+        self.col = col
+        self.tile_data = tile_data
+        self.screen_x = screen_x
+        self.screen_y = screen_y
+        self.scale = 1.0
+        self.alpha = 255
+    
+    def update(self, dt: float) -> bool:
+        completed = super().update(dt)
+        progress = self.get_progress()
+        
+        # Scale down with slight bounce
+        bounce = 1.0 + math.sin(progress * math.pi) * 0.2
+        self.scale = max(0.0, (1.0 - progress) * bounce)
+        
+        # Fade out
+        self.alpha = int(255 * (1.0 - progress))
+        
+        return completed
+    
+    def get_scale(self) -> float:
+        return self.scale
+    
+    def get_alpha(self) -> int:
+        return self.alpha
+
+class FireballTileAnimation(Animation):
+    """Animation for tiles hit by fireball - fly off with physics"""
+    
+    def __init__(self, row: int, col: int, tile_data, screen_x: float, screen_y: float, 
+                 impact_x: float, impact_y: float, duration: float = 1.0):
+        super().__init__(duration)
+        self.row = row
+        self.col = col
+        self.tile_data = tile_data
+        self.start_x = screen_x
+        self.start_y = screen_y
+        self.current_x = screen_x
+        self.current_y = screen_y
+        
+        # Calculate direction away from impact point
+        dx = screen_x - impact_x
+        dy = screen_y - impact_y
+        distance = math.sqrt(dx*dx + dy*dy)
+        if distance > 0:
+            dx /= distance
+            dy /= distance
+        else:
+            dx, dy = random.uniform(-1, 1), random.uniform(-1, 1)
+        
+        # Initial velocity (upward and away from impact)
+        self.vx = dx * random.uniform(200, 400)
+        self.vy = dy * random.uniform(200, 400) - random.uniform(300, 500)  # Add upward bias
+        
+        # Rotation
+        self.rotation = 0
+        self.rotation_speed = random.uniform(-720, 720)  # degrees per second
+        
+        # Scale and alpha
+        self.scale = 1.0
+        self.alpha = 255
+    
+    def update(self, dt: float) -> bool:
+        completed = super().update(dt)
+        progress = self.get_progress()
+        
+        # Apply physics
+        self.vy += 800 * dt  # Gravity
+        self.current_x += self.vx * dt
+        self.current_y += self.vy * dt
+        
+        # Apply rotation
+        self.rotation += self.rotation_speed * dt
+        
+        # Fade out in second half
+        if progress > 0.5:
+            fade_progress = (progress - 0.5) / 0.5
+            self.alpha = int(255 * (1.0 - fade_progress))
+        
+        return completed
+    
+    def get_position(self) -> Tuple[float, float]:
+        return (self.current_x, self.current_y)
+    
+    def get_rotation(self) -> float:
+        return self.rotation
+    
+    def get_scale(self) -> float:
+        return self.scale
+    
+    def get_alpha(self) -> int:
+        return self.alpha
+
+class BoardWipeAnimation(Animation):
+    """Animation for board wipe tile - lift, rotate, then delete"""
+    
+    def __init__(self, row: int, col: int, screen_x: float, screen_y: float, duration: float = 0.5):
+        super().__init__(duration)
+        self.row = row
+        self.col = col
+        self.screen_x = screen_x
+        self.screen_y = screen_y
+        self.current_y = screen_y
+        self.rotation = 0
+        self.scale = 1.0
+        self.phase = 'lift'  # lift -> rotate -> vanish
+    
+    def update(self, dt: float) -> bool:
+        completed = super().update(dt)
+        progress = self.get_progress()
+        
+        # Phase 1: Lift (0-0.3)
+        if progress < 0.3:
+            lift_progress = progress / 0.3
+            self.current_y = self.screen_y - lift_progress * 20  # Lift 20 pixels
+            self.phase = 'lift'
+        # Phase 2: Rotate (0.3-0.7)
+        elif progress < 0.7:
+            rotate_progress = (progress - 0.3) / 0.4
+            self.rotation = rotate_progress * 720  # Two full rotations
+            self.phase = 'rotate'
+        # Phase 3: Vanish (0.7-1.0)
+        else:
+            vanish_progress = (progress - 0.7) / 0.3
+            self.scale = 1.0 - vanish_progress
+            self.phase = 'vanish'
+        
+        return completed
+    
+    def get_y_offset(self) -> float:
+        return self.current_y - self.screen_y
+    
+    def get_rotation(self) -> float:
+        return self.rotation
+    
+    def get_scale(self) -> float:
+        return self.scale

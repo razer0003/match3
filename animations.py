@@ -284,13 +284,161 @@ class PopParticle:
             if particle['life'] <= 0:
                 continue
                 
-            # Keep original size and full opacity for crisp pixel art look
-            size = int(particle['size'])
+            alpha = int(255 * (particle['life'] / particle['max_life']))
+            size = max(1, int(particle['size'] * (particle['life'] / particle['max_life'])))
             
-            # Draw solid circle directly on screen - no alpha blending
-            pygame.draw.circle(screen, self.color, 
-                             (int(particle['x']), int(particle['y'])), size)
+            # Create surface with alpha
+            particle_surface = pygame.Surface((size * 2, size * 2), pygame.SRCALPHA)
+            pygame.draw.circle(particle_surface, self.color, (size, size), size)
+            particle_surface.set_alpha(alpha)
+            
+            screen.blit(particle_surface, (particle['x'] - size, particle['y'] - size))
     
     def is_finished(self) -> bool:
         """Check if particle effect is done"""
         return self.life <= 0 and len(self.particles) == 0
+
+class PlopOutAnimation(Animation):
+    """Animation for tiles deleted by special tiles - scales up and fades out"""
+    
+    def __init__(self, duration: float = 0.4, max_scale: float = 1.5):
+        super().__init__(duration)
+        self.max_scale = max_scale
+        self.current_scale = 1.0
+        self.current_alpha = 255
+        self.tile = None
+        self.row = 0
+        self.col = 0
+    
+    def update(self, dt: float) -> bool:
+        completed = super().update(dt)
+        progress = self.get_progress()
+        
+        # Scale up and fade out
+        self.current_scale = 1.0 + (self.max_scale - 1.0) * progress
+        self.current_alpha = int(255 * (1.0 - progress))
+        
+        return completed
+
+class PhysicsEjectAnimation(Animation):
+    """Animation for tiles ejected by fireball - physics-based movement"""
+    
+    def __init__(self, start_pos: Tuple[float, float], duration: float = 1.5):
+        super().__init__(duration)
+        self.start_x, self.start_y = start_pos
+        self.current_x = self.start_x
+        self.current_y = self.start_y
+        
+        # Random physics parameters
+        self.velocity_x = random.uniform(-200, 200)  # Left/right velocity
+        self.velocity_y = random.uniform(-300, -150)  # Initial upward velocity
+        self.gravity = 800  # Downward acceleration
+        self.rotation_speed = random.uniform(-720, 720)  # Rotation in degrees/sec
+        self.current_rotation = 0
+        
+        self.tile = None
+        self.row = 0
+        self.col = 0
+    
+    def update(self, dt: float) -> bool:
+        completed = super().update(dt)
+        
+        # Update physics
+        self.velocity_y += self.gravity * dt  # Apply gravity
+        self.current_x += self.velocity_x * dt
+        self.current_y += self.velocity_y * dt
+        self.current_rotation += self.rotation_speed * dt
+        
+        return completed
+
+class ProgressiveRocketAnimation(Animation):
+    """Animation for progressive rocket deletion showing tiles being cleared one by one"""
+    
+    def __init__(self, positions: list, is_horizontal: bool, start_pos: Tuple[int, int], duration_per_tile: float = 0.05):
+        total_duration = len(positions) * duration_per_tile
+        super().__init__(total_duration)
+        self.positions = positions.copy()  # List of (row, col) positions to delete
+        self.is_horizontal = is_horizontal
+        self.start_row, self.start_col = start_pos
+        self.duration_per_tile = duration_per_tile
+        self.current_index = 0
+        self.deleted_positions = []  # Track which positions have been deleted
+        
+        # Sort positions by distance from activation point for better visual progression
+        if is_horizontal:
+            # Sort by column distance from activation column
+            self.positions.sort(key=lambda pos: abs(pos[1] - self.start_col))
+        else:
+            # Sort by row distance from activation row  
+            self.positions.sort(key=lambda pos: abs(pos[0] - self.start_row))
+    
+    def update(self, dt: float) -> bool:
+        completed = super().update(dt)
+        
+        # Calculate how many tiles should be deleted by now
+        target_index = int(self.elapsed / self.duration_per_tile)
+        
+        # Mark additional tiles for deletion if we've progressed
+        while self.current_index < len(self.positions) and self.current_index <= target_index:
+            if self.current_index < len(self.positions):
+                pos = self.positions[self.current_index]
+                if pos not in self.deleted_positions:
+                    self.deleted_positions.append(pos)
+            self.current_index += 1
+        
+        return completed
+    
+    def get_deleted_positions(self) -> list:
+        """Get positions that should currently be deleted"""
+        return self.deleted_positions.copy()
+    
+    def should_delete_position(self, row: int, col: int) -> bool:
+        """Check if a position should be deleted at the current time"""
+        return (row, col) in self.deleted_positions
+
+class BoardWipeChargingAnimation(Animation):
+    """Animation for board wipe charging up - lifts and spins before detonation"""
+    
+    def __init__(self, start_pos: Tuple[float, float], duration: float = 1.2):
+        super().__init__(duration)
+        self.start_x, self.start_y = start_pos
+        self.current_x = self.start_x
+        self.current_y = self.start_y
+        
+        # Animation parameters
+        self.lift_height = 20  # How high to lift the tile
+        self.spin_speed = 1440  # Degrees per second (4 full rotations per second)
+        self.current_rotation = 0
+        
+        # Animation phases
+        self.charge_duration = 0.8  # How long to charge before activation
+        self.should_activate = False
+        
+        # Store tile and position data
+        self.tile = None
+        self.row = 0
+        self.col = 0
+    
+    def update(self, dt: float) -> bool:
+        completed = super().update(dt)
+        
+        # Calculate lift based on animation progress during charge phase
+        if self.elapsed < self.charge_duration:
+            # Lift up and spin during charge phase
+            charge_progress = self.elapsed / self.charge_duration
+            # Ease out for smooth lift
+            lift_factor = 1 - (1 - charge_progress) ** 2
+            self.current_y = self.start_y - (self.lift_height * lift_factor)
+            
+            # Accelerating spin - spin faster as charge builds up
+            spin_multiplier = 1 + charge_progress * 3  # Spin gets 4x faster by the end
+            self.current_rotation += self.spin_speed * spin_multiplier * dt
+        elif not self.should_activate:
+            # Mark for activation after charge phase
+            self.should_activate = True
+            
+        return completed
+    
+    def should_detonate(self) -> bool:
+        """Check if the board wipe should detonate now"""
+        return self.should_activate

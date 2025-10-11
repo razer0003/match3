@@ -6,7 +6,7 @@ import time
 from typing import List, Tuple, Optional, Set
 import math
 from board import Board, Tile, TileColor, Match, MatchType
-from animations import FallAnimation, SwapAnimation, PulseAnimation, ParticleEffect, PopAnimation, PopParticle, SpawnAnimation
+from animations import FallAnimation, SwapAnimation, PulseAnimation, ParticleEffect, PopAnimation, PopParticle, SpawnAnimation, PlopOutAnimation, PhysicsEjectAnimation, ProgressiveRocketAnimation, BoardWipeChargingAnimation
 from special_tiles import SpecialTile, SpecialTileType
 from arcade_particles import PixelParticleSystem
 from levels import get_level_config, LevelConfig
@@ -196,6 +196,12 @@ class Match3Game:
         self.pop_particles = []
         self.spawn_animations = []
         self.pending_matches = None
+        
+        # Special tile deletion animations
+        self.plop_out_animations = []
+        self.physics_eject_animations = []
+        self.progressive_rocket_animations = []
+        self.board_wipe_charging_animations = []
         
         # Boss board animation systems
         self.boss_fall_animations = []
@@ -476,15 +482,15 @@ class Match3Game:
                 # Select the first tile (only if it's not animating)
                 self.selected_tile = (row, col)
             else:
-                # Check if selected tile is still valid (not animating)
-                if self.is_tile_animating(*self.selected_tile):
+                # Check if selected tile is still valid (swappable)
+                if not self.is_tile_swappable(*self.selected_tile):
                     self.selected_tile = (row, col)  # Select new tile instead
                     return
                 
                 # Try to swap with the selected tile
                 if self.are_adjacent(self.selected_tile, (row, col)):
-                    # Check if either tile involved in the swap is animating
-                    if not (self.is_tile_animating(*self.selected_tile) or self.is_tile_animating(row, col)):
+                    # Check if either tile involved in the swap is swappable
+                    if self.is_tile_swappable(*self.selected_tile) and self.is_tile_swappable(row, col):
                         self.start_swap_animation(self.selected_tile, (row, col))
                 self.selected_tile = None
     
@@ -662,6 +668,9 @@ class Match3Game:
         # Clear any existing fall animations to prevent interference
         self.fall_animations.clear()
         
+        # Pause combo timer during the long reality break animation
+        self.pause_combo_timer()
+        
         # Remove the combo tile
         self.board.set_tile(*pos, None)
         
@@ -776,9 +785,15 @@ class Match3Game:
         self.board_wipe_timer += dt
         
         if self.board_wipe_timer >= self.board_wipe_delay:
-            # Time to clear the tiles
+            # Start physics eject animations for tiles before clearing them
             for pos in self.board_wipe_positions:
-                self.board.set_tile(*pos, None)
+                row, col = pos
+                tile = self.board.get_tile(row, col)
+                if tile:
+                    # Start physics eject animation for this tile
+                    self.start_physics_eject_animation(row, col, tile)
+                    # Clear the tile from the board (animation will show the flying tile)
+                    self.board.set_tile(row, col, None)
             
             # Reset state
             self.board_wipe_active = False
@@ -808,8 +823,8 @@ class Match3Game:
                 tile = self.board.get_tile(*pos)
                 
                 if tile and tile.is_special():
-                    # Activate this bomb
-                    result = self.board.activate_special_tile(*pos)
+                    # Activate this bomb with animations
+                    result = self.activate_special_tile_with_animation(*pos)
                     if isinstance(result, tuple) and len(result) == 2:
                         affected_positions, activated_tiles = result
                     else:
@@ -873,6 +888,9 @@ class Match3Game:
         """Start black hole animation for bomb+lightning combo"""
         # Clear any existing fall animations to prevent stuck falling tiles
         self.fall_animations.clear()
+        
+        # Pause combo timer during the long black hole animation
+        self.pause_combo_timer()
         
         self.black_hole_active = True
         self.black_hole_center_x = center_x
@@ -943,6 +961,9 @@ class Match3Game:
                 # Animation complete
                 self.black_hole_active = False
                 self.original_tile_positions = {}
+                
+                # Resume combo timer after black hole animation
+                self.resume_combo_timer()
                 
                 # Clear any existing fall animations to prevent duplicates
                 self.fall_animations.clear()
@@ -1057,6 +1078,9 @@ class Match3Game:
         """Complete the Reality Break animation and restore normal gameplay"""
         self.reality_break_active = False
         self.reality_break_phase = None
+        
+        # Resume combo timer after reality break animation
+        self.resume_combo_timer()
         
         # Clear all animations and effects
         self.fall_animations.clear()
@@ -1364,8 +1388,8 @@ class Match3Game:
                             }
                 print(f"Stored {len(self.original_tile_positions)} tiles for black hole animation")
             
-            # Activate the combo tile immediately
-            result = self.board.activate_special_tile(*combo_pos)
+            # Activate the combo tile immediately with animations
+            result = self.activate_special_tile_with_animation(*combo_pos)
             if isinstance(result, tuple) and len(result) == 2:
                 affected_positions, activated_tiles = result
             else:
@@ -1403,21 +1427,23 @@ class Match3Game:
         from special_tiles import SpecialTileType
         
         if tile1 and tile1.is_special() and tile1.special_tile.tile_type == SpecialTileType.BOARD_WIPE:
-            # Board wipe targets the color of the tile it was swapped with
+            # Board wipe needs the target color - temporarily set it on the tile
             target_color = tile2.color if tile2 and not tile2.is_empty() else None
             if target_color:
-                self.handle_board_wipe_activation(pos1, tile1.special_tile, target_color)
+                tile1.special_tile.target_color = target_color  # Store target color for charging animation
+                result = self.activate_special_tile_with_animation(*pos1)
                 special_activated = True
         elif tile2 and tile2.is_special() and tile2.special_tile.tile_type == SpecialTileType.BOARD_WIPE:
-            # Board wipe targets the color of the tile it was swapped with
+            # Board wipe needs the target color - temporarily set it on the tile  
             target_color = tile1.color if tile1 and not tile1.is_empty() else None
             if target_color:
-                self.handle_board_wipe_activation(pos2, tile2.special_tile, target_color)
+                tile2.special_tile.target_color = target_color  # Store target color for charging animation
+                result = self.activate_special_tile_with_animation(*pos2)
                 special_activated = True
         else:
             # Handle other special tiles normally
             if tile1 and tile1.is_special():
-                result = self.board.activate_special_tile(*pos1)
+                result = self.activate_special_tile_with_animation(*pos1)
                 if isinstance(result, tuple) and len(result) == 2:
                     affected_positions, activated_tiles = result
                 else:
@@ -1436,7 +1462,7 @@ class Match3Game:
                     special_activated = True
             
             if tile2 and tile2.is_special():
-                result = self.board.activate_special_tile(*pos2)
+                result = self.activate_special_tile_with_animation(*pos2)
                 if isinstance(result, tuple) and len(result) == 2:
                     affected_positions, activated_tiles = result
                 else:
@@ -1587,11 +1613,35 @@ class Match3Game:
                 if (0 <= row < self.board_height and 0 <= col < self.board_width):
                     positions_to_clear.append((row, col))
         
-        # Clear tiles
+        # Handle special tiles and regular tiles differently
+        special_tiles_to_detonate = []
+        regular_tiles_to_eject = []
+        
         for row, col in positions_to_clear:
             tile = self.board.get_tile(row, col)
             if tile:
-                self.board.set_tile(row, col, None)
+                if tile.is_special():
+                    # Special tiles get detonated (activated) instead of ejected
+                    special_tiles_to_detonate.append((row, col, tile))
+                else:
+                    # Regular tiles get physics ejected
+                    regular_tiles_to_eject.append((row, col, tile))
+        
+        # Eject regular tiles with physics animations
+        for row, col, tile in regular_tiles_to_eject:
+            self.start_physics_eject_animation(row, col, tile)
+            self.board.set_tile(row, col, None)
+        
+        # Detonate special tiles by activating them
+        for row, col, tile in special_tiles_to_detonate:
+            print(f"Fireball detonating special tile at ({row}, {col}): {tile.special_tile.tile_type}")
+            # Activate the special tile with animations (this will cause it to trigger its effect)
+            result = self.activate_special_tile_with_animation(row, col)
+            if isinstance(result, tuple) and len(result) == 2:
+                affected_positions, activated_tiles = result
+                # Create particle effects for the detonated special tile
+                for tile_row, tile_col, special_tile in activated_tiles:
+                    self.create_special_effect_particles((tile_row, tile_col), special_tile)
                 
         # Create single dramatic explosion at impact center
         if positions_to_clear:
@@ -2200,6 +2250,54 @@ class Match3Game:
             if pulse_anim.update(dt):
                 self.pulse_animations.remove(pulse_anim)
         
+        # Update physics eject animations (all special tile deletions)
+        for eject_anim in self.physics_eject_animations[:]:
+            if eject_anim.update(dt):
+                self.physics_eject_animations.remove(eject_anim)
+        
+        # Update board wipe charging animations
+        for charging_anim in self.board_wipe_charging_animations[:]:
+            if charging_anim.update(dt):
+                # Animation completed, remove it
+                self.board_wipe_charging_animations.remove(charging_anim)
+            elif charging_anim.should_detonate() and not hasattr(charging_anim, 'activated'):
+                # Time to detonate - activate the board wipe with target color
+                charging_anim.activated = True
+                
+                # Use the target color to find affected positions
+                target_color = charging_anim.target_color
+                positions_to_clear = []
+                
+                # Find all tiles with the target color
+                for r in range(charging_anim.board.height):
+                    for c in range(charging_anim.board.width):
+                        tile = charging_anim.board.get_tile(r, c)
+                        if tile and not tile.is_empty() and tile.color == target_color:
+                            positions_to_clear.append((r, c))
+                
+                print(f"Board wipe charging complete! Targeting {target_color.name} - will clear {len(positions_to_clear)} tiles")
+                
+                # Clear the board wipe tile itself
+                charging_anim.board.grid[charging_anim.row][charging_anim.col] = None
+                
+                # Start physics animations for all affected tiles and clear them
+                for pos_row, pos_col in positions_to_clear:
+                    affected_tile = charging_anim.board.get_tile(pos_row, pos_col)
+                    if affected_tile and not affected_tile.is_special():
+                        self.start_physics_eject_animation(pos_row, pos_col, affected_tile, charging_anim.is_boss_board)
+                        charging_anim.board.grid[pos_row][pos_col] = None
+                
+                # Add dramatic effects like the original
+                pos = (charging_anim.row, charging_anim.col)
+                center_x, center_y = (charging_anim.current_x + self.tile_size // 2, 
+                                    charging_anim.current_y + self.tile_size // 2)
+                
+                # Create particle effects and screen shake
+                self.start_screen_shake(10.0, 0.6)  # Long shake for board wipe
+                
+                # Start fall animation to fill gaps
+                self.start_fall_animation()
+        
         # Update particle effects
         for effect in self.particle_effects[:]:
             effect.update(dt)
@@ -2452,6 +2550,60 @@ class Match3Game:
                 
                 # Draw tile at current animated position with scaling
                 self.draw_black_hole_tile(tile_data['tile'], tile_data['current_x'], tile_data['current_y'], scale)
+        
+        # Draw physics eject animations (all special tile deletions now use this)
+        for eject_anim in self.physics_eject_animations:
+            if eject_anim.tile:
+                self.draw_physics_eject_tile(eject_anim.tile, (eject_anim.current_x, eject_anim.current_y), eject_anim.current_rotation)
+        
+        # Draw board wipe charging animations (spinning and lifting)
+        for charging_anim in self.board_wipe_charging_animations:
+            if charging_anim.tile:
+                self.draw_charging_board_wipe(charging_anim.tile, (charging_anim.current_x, charging_anim.current_y), charging_anim.current_rotation)
+    
+    def draw_charging_board_wipe(self, tile, position: Tuple[float, float], rotation: float):
+        """Draw board wipe tile during charging animation (lifted and spinning)"""
+        center_x, center_y = position  # position is already the center from get_tile_screen_pos
+        
+        # Get the board wipe special sprite
+        sprite = self.sprite_manager.get_special_sprite("boardwipe", self.tile_size)
+            
+        if sprite:
+            # Create a copy of the sprite to rotate
+            rotated_sprite = pygame.transform.rotate(sprite, rotation)
+            
+            # Center the rotated sprite at the tile center
+            rect = rotated_sprite.get_rect()
+            rect.center = (center_x, center_y)
+            
+            # Add a charging effect - pulsing circular glow
+            glow_size = rect.width + 30
+            glow_surface = pygame.Surface((glow_size, glow_size), pygame.SRCALPHA)
+            glow_intensity = abs(math.sin(pygame.time.get_ticks() * 0.01)) * 0.5 + 0.3  # Pulse between 0.3 and 0.8
+            glow_color = (255, 0, 255, int(80 * glow_intensity))  # Magenta glow, more transparent
+            
+            # Draw multiple concentric circles for a smoother glow effect
+            center = glow_size // 2
+            max_radius = center - 5
+            for i in range(5):
+                alpha = int(40 * glow_intensity * (1 - i * 0.2))  # Fade out towards edges
+                radius = max_radius - i * 3
+                if alpha > 0 and radius > 0:
+                    pygame.draw.circle(glow_surface, (*glow_color[:3], alpha), (center, center), radius)
+            
+            # Draw glow first, centered on the tile center
+            glow_rect = glow_surface.get_rect()
+            glow_rect.center = (center_x, center_y)
+            self.screen.blit(glow_surface, glow_rect)
+            
+            # Then draw the spinning tile
+            self.screen.blit(rotated_sprite, rect)
+        else:
+            # Fallback: draw colored rectangle if no sprite (centered on position)
+            fallback_rect = pygame.Rect(0, 0, self.tile_size, self.tile_size)
+            fallback_rect.center = (center_x, center_y)
+            pygame.draw.rect(self.screen, tile.color.value if hasattr(tile.color, 'value') else (128, 0, 128), 
+                           fallback_rect)
     
     def draw_black_hole_tile(self, tile, center_x, center_y, scale):
         """Draw a tile during black hole condensation with scaling using actual tile sprites"""
@@ -2501,8 +2653,8 @@ class Match3Game:
             if (row, col) in [swap_anim.tile_pos1, swap_anim.tile_pos2]:
                 return True
         
-        # Check if this position is affected by falling tiles in the same column
-        return self.is_column_affected_by_falling(col, row)
+        # Check if this specific position is actually falling (not just in a column with falling tiles)
+        return self.is_position_actually_falling(row, col)
     
     def is_column_affected_by_falling(self, col, max_row=None):
         """Check if a column (or specific row in column) is affected by falling tiles"""
@@ -2519,6 +2671,34 @@ class Match3Game:
                 else:
                     # New tile falling to a position (no from_row)
                     if fall_anim.to_row == max_row:
+                        return True
+        return False
+    
+    def is_tile_swappable(self, row, col):
+        """Check if a tile can be swapped (more restrictive than is_tile_animating for swap prevention)"""
+        # During black hole condensing, no tiles are swappable
+        if self.black_hole_active and self.black_hole_phase == 'condensing':
+            return False
+            
+        # Check if involved in swap animation
+        for swap_anim in self.swap_animations:
+            if (row, col) in [swap_anim.tile_pos1, swap_anim.tile_pos2]:
+                return False
+        
+        # Check if this position or column is affected by falling tiles (more restrictive for swaps)
+        return not self.is_column_affected_by_falling(col, row)
+    
+    def is_position_actually_falling(self, row, col):
+        """Check if a specific position is actually involved in a falling animation"""
+        for fall_anim in self.fall_animations:
+            if fall_anim.col == col:
+                if hasattr(fall_anim, 'from_row'):
+                    # Existing tile moving - check if this is the source or destination
+                    if fall_anim.from_row == row or fall_anim.to_row == row:
+                        return True
+                else:
+                    # New tile falling - check if this is the destination
+                    if fall_anim.to_row == row:
                         return True
         return False
     
@@ -2723,6 +2903,151 @@ class Match3Game:
         # Simple implementation - draw rectangle with rounded corners
         pygame.draw.rect(surface, color, rect)
         # Could add actual rounded corner implementation here for better visuals
+    
+    def draw_plop_out_tile(self, tile, screen_pos, scale, alpha):
+        """Draw a tile with plop-out animation (scale up and fade out)"""
+        if not tile or tile.is_empty():
+            return
+            
+        x, y = screen_pos
+        scaled_size = int(self.tile_size * scale)
+        
+        # Get the sprite or create surface
+        sprite_surface = None
+        
+        if tile.is_special():
+            visual_data = tile.special_tile.get_visual_representation()
+            sprite_type = visual_data.get('sprite_type')
+            if sprite_type and self.sprite_manager.has_special_sprite(sprite_type):
+                sprite_surface = self.sprite_manager.get_special_sprite(sprite_type, scaled_size)
+        
+        if sprite_surface is None:
+            sprite_surface = self.sprite_manager.get_tile_sprite(tile.color, scaled_size)
+        
+        if sprite_surface:
+            # Apply alpha transparency
+            sprite_with_alpha = sprite_surface.copy()
+            sprite_with_alpha.set_alpha(alpha)
+            
+            # Center the sprite at screen position
+            sprite_rect = sprite_with_alpha.get_rect(center=(x + self.tile_size // 2, y + self.tile_size // 2))
+            self.screen.blit(sprite_with_alpha, sprite_rect)
+    
+    def draw_physics_eject_tile(self, tile, screen_pos, rotation):
+        """Draw a tile with physics eject animation (rotating and moving)"""
+        if not tile or tile.is_empty():
+            return
+            
+        x, y = screen_pos
+        
+        # Get the sprite
+        sprite_surface = None
+        
+        if tile.is_special():
+            visual_data = tile.special_tile.get_visual_representation()
+            sprite_type = visual_data.get('sprite_type')
+            if sprite_type and self.sprite_manager.has_special_sprite(sprite_type):
+                sprite_surface = self.sprite_manager.get_special_sprite(sprite_type, self.tile_size)
+        
+        if sprite_surface is None:
+            sprite_surface = self.sprite_manager.get_tile_sprite(tile.color, self.tile_size)
+        
+        if sprite_surface:
+            # Rotate the sprite
+            rotated_sprite = pygame.transform.rotate(sprite_surface, rotation)
+            
+            # Center the rotated sprite at screen position
+            sprite_rect = rotated_sprite.get_rect(center=(x, y))
+            self.screen.blit(rotated_sprite, sprite_rect)
+    
+    def start_plop_out_animation(self, row, col, tile, is_boss_board=False):
+        """Start a physics-based falling animation for tiles deleted by special tiles"""
+        # Use the same physics ejection animation as fireball for consistency
+        self.start_physics_eject_animation(row, col, tile, is_boss_board)
+    
+    def start_physics_eject_animation(self, row, col, tile, is_boss_board=False):
+        """Start a physics eject animation for a tile"""
+        if is_boss_board:
+            screen_pos = self.get_boss_tile_screen_pos((row, col))
+        else:
+            screen_pos = self.get_tile_screen_pos((row, col))
+        eject_anim = PhysicsEjectAnimation(screen_pos)
+        eject_anim.tile = tile
+        eject_anim.row = row
+        eject_anim.col = col
+        eject_anim.is_boss_board = is_boss_board
+        self.physics_eject_animations.append(eject_anim)
+    
+    def activate_special_tile_with_animation(self, row, col, board=None):
+        """Activate a special tile with plop-out animations for affected tiles"""
+        if board is None:
+            board = self.board
+            
+        is_boss_board = (board == self.boss_board)
+        
+        tile = board.get_tile(row, col)
+        if not tile or not tile.is_special():
+            return [], []
+        
+        # Special handling for board wipe - show color selection animation
+        if tile.special_tile.tile_type.name == "BOARD_WIPE":
+            return self.activate_board_wipe_with_animation(row, col, board)
+        
+        # Get the affected positions BEFORE clearing
+        affected_positions = tile.special_tile.get_affected_positions(board, (row, col))
+        
+        # Start plop-out animations for all affected regular tiles
+        for pos_row, pos_col in affected_positions:
+            if 0 <= pos_row < board.height and 0 <= pos_col < board.width:
+                affected_tile = board.get_tile(pos_row, pos_col)
+                if affected_tile and not affected_tile.is_special():
+                    # Start plop-out animation for this tile
+                    self.start_plop_out_animation(pos_row, pos_col, affected_tile, is_boss_board)
+        
+        # Now activate the special tile normally (this will handle chain reactions)
+        # Pass this method as callback so chain reactions also get animations
+        def animation_callback(chain_row, chain_col):
+            return self.activate_special_tile_with_animation(chain_row, chain_col, board)
+            
+        result = board.activate_special_tile(row, col, animation_callback)
+        
+        return result
+    
+    def activate_board_wipe_with_animation(self, row, col, board):
+        """Activate board wipe with charging animation (lift and spin before detonation)"""
+        tile = board.get_tile(row, col)
+        if not tile or not tile.is_special():
+            return [], []
+        
+        # Get the target color (should be set during swap)
+        target_color = getattr(tile.special_tile, 'target_color', None)
+        if not target_color:
+            # Fallback to normal activation if no target color
+            return board.activate_special_tile(row, col)
+        
+        # Get screen position for the animation
+        is_boss_board = (board == self.boss_board)
+        if is_boss_board:
+            screen_pos = self.get_boss_tile_screen_pos((row, col))
+        else:
+            screen_pos = self.get_tile_screen_pos((row, col))
+        
+        # Start charging animation
+        charging_anim = BoardWipeChargingAnimation(screen_pos)
+        charging_anim.tile = tile
+        charging_anim.row = row
+        charging_anim.col = col
+        charging_anim.board = board
+        charging_anim.is_boss_board = is_boss_board
+        charging_anim.target_color = target_color
+        
+        self.board_wipe_charging_animations.append(charging_anim)
+        
+        # Remove the tile from board immediately so it doesn't interfere with rendering
+        board.grid[row][col] = None
+        
+        # Don't activate immediately - let animation handle it
+        return [], []
     
     def draw_dual_borders(self):
         """Draw borders around both boards in dual mode"""
@@ -3335,8 +3660,8 @@ class Match3Game:
                     self.handle_boss_reality_break_combo(combo_pos, combo_tile)
                 return
             
-            # Activate the combo tile immediately on boss board
-            result = self.boss_board.activate_special_tile(*combo_pos)
+            # Activate the combo tile immediately on boss board with animations
+            result = self.activate_special_tile_with_animation(*combo_pos, board=self.boss_board)
             if isinstance(result, tuple) and len(result) == 2:
                 affected_positions, activated_tiles = result
                 # Create particle effects for boss special tiles
@@ -3370,7 +3695,7 @@ class Match3Game:
         else:
             # Handle other special tiles normally
             if tile1 and tile1.is_special():
-                result = self.boss_board.activate_special_tile(*pos1)
+                result = self.activate_special_tile_with_animation(*pos1, board=self.boss_board)
                 if isinstance(result, tuple) and len(result) == 2:
                     affected_positions, activated_tiles = result
                     if affected_positions:
@@ -3380,7 +3705,7 @@ class Match3Game:
                         special_activated = True
             
             if tile2 and tile2.is_special():
-                result = self.boss_board.activate_special_tile(*pos2)
+                result = self.activate_special_tile_with_animation(*pos2, board=self.boss_board)
                 if isinstance(result, tuple) and len(result) == 2:
                     affected_positions, activated_tiles = result
                     if affected_positions:
@@ -3507,7 +3832,10 @@ class Match3Game:
         self.board_wipe_target_color = target_color
         self.board_wipe_boss_board = True  # Flag to indicate this is for boss board
         
-        # Remove the board wipe tile
+        # Remove the board wipe tile with animation
+        tile = self.boss_board.get_tile(*pos)
+        if tile:
+            self.start_plop_out_animation(*pos, tile, is_boss_board=True)
         self.boss_board.set_tile(*pos, None)
         
         # Create explosion particle effect at activation position
@@ -3624,7 +3952,7 @@ class Match3Game:
             # Activate the special tile at this position on boss board
             tile = self.boss_board.get_tile(*pos)
             if tile and tile.is_special():
-                result = self.boss_board.activate_special_tile(*pos)
+                result = self.activate_special_tile_with_animation(*pos, board=self.boss_board)
                 if isinstance(result, tuple) and len(result) == 2:
                     affected_positions, activated_tiles = result
                     # Create particle effects for boss special tiles

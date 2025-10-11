@@ -516,8 +516,14 @@ class Board:
                 else:
                     self.grid[row][col] = None
     
-    def activate_special_tile(self, row: int, col: int) -> tuple:
-        """Activate a special tile and return (affected_positions, activated_tiles)"""
+    def activate_special_tile(self, row: int, col: int, animation_callback=None) -> tuple:
+        """Activate a special tile and return (affected_positions, activated_tiles)
+        
+        Args:
+            row: Row of the special tile
+            col: Column of the special tile  
+            animation_callback: Optional function to call for chain reactions instead of direct activation
+        """
         tile = self.get_tile(row, col)
         if not tile or not tile.is_special():
             return [], []
@@ -552,12 +558,65 @@ class Board:
         # Handle chain reactions - special tiles detonate instead of being destroyed
         all_affected = affected_positions.copy()
         for chain_row, chain_col, special_tile in chain_reactions:
-            # Recursively activate the special tile (it will detonate)
-            chain_positions, chain_activated = self.activate_special_tile(chain_row, chain_col)
-            all_affected.extend(chain_positions)
-            activated_tiles.extend(chain_activated)
+            # Special handling for board wipe - when hit by other special tiles,
+            # it targets a random color instead of activating normally
+            if special_tile.tile_type.name == "BOARD_WIPE":
+                # Get a random color from tiles currently on the board
+                random_color = self._get_random_board_color()
+                if random_color:
+                    # Find all tiles of that color to clear
+                    color_positions = []
+                    for r in range(self.height):
+                        for c in range(self.width):
+                            tile = self.get_tile(r, c)
+                            if tile and not tile.is_empty() and tile.color == random_color:
+                                color_positions.append((r, c))
+                    
+                    # Clear the board wipe tile itself
+                    self.grid[chain_row][chain_col] = None
+                    
+                    # Clear all tiles of the random color
+                    for r, c in color_positions:
+                        if self.get_tile(r, c) and not self.get_tile(r, c).is_special():
+                            self.grid[r][c] = None
+                    
+                    all_affected.extend(color_positions)
+                    activated_tiles.append((chain_row, chain_col, special_tile))
+                else:
+                    # No valid colors found, activate normally
+                    if animation_callback:
+                        chain_positions, chain_activated = animation_callback(chain_row, chain_col)
+                    else:
+                        chain_positions, chain_activated = self.activate_special_tile(chain_row, chain_col)
+                    all_affected.extend(chain_positions)
+                    activated_tiles.extend(chain_activated)
+            else:
+                # Recursively activate other special tiles normally  
+                if animation_callback:
+                    chain_positions, chain_activated = animation_callback(chain_row, chain_col)
+                else:
+                    chain_positions, chain_activated = self.activate_special_tile(chain_row, chain_col)
+                all_affected.extend(chain_positions)
+                activated_tiles.extend(chain_activated)
         
         return list(set(all_affected)), activated_tiles  # Remove duplicates from affected positions
+    
+    def _get_random_board_color(self) -> Optional[TileColor]:
+        """Get a random color from tiles currently on the board"""
+        import random
+        available_colors = set()
+        
+        # Collect all colors currently on the board
+        for row in range(self.height):
+            for col in range(self.width):
+                tile = self.get_tile(row, col)
+                if tile and not tile.is_empty() and not tile.is_special():
+                    available_colors.add(tile.color)
+        
+        # Return a random color if any are available
+        if available_colors:
+            return random.choice(list(available_colors))
+        return None
     
     def check_for_special_tile_matches(self, row: int, col: int) -> bool:
         """Check if a position contains a special tile that should be activated"""
